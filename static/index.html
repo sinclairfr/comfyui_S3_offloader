@@ -24,389 +24,120 @@
     --mono: 'JetBrains Mono', monospace;
     --sans: 'Syne', sans-serif;
   }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 13px;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; height: 52px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+  .header-title { font-family: var(--sans); font-weight: 800; font-size: 16px; letter-spacing: -0.5px; display: flex; align-items: center; gap: 10px; }
+  .logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-  /* Header */
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 24px;
-    height: 52px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    flex-shrink: 0;
-  }
-  .header-title {
-    font-family: var(--sans);
-    font-weight: 800;
-    font-size: 16px;
-    letter-spacing: -0.5px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .logo-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 12px var(--accent);
-    animation: pulse 2s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-  .header-actions { display: flex; gap: 8px; align-items: center; }
-
-  /* Tabs */
-  .tabs {
-    display: flex;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    padding: 0 24px;
-    flex-shrink: 0;
-  }
-  .tab {
-    padding: 10px 18px;
-    cursor: pointer;
-    color: var(--text2);
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    border-bottom: 2px solid transparent;
-    transition: all 0.15s;
-    user-select: none;
-  }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); padding: 0 24px; flex-shrink: 0; }
+  .tab { padding: 10px 18px; cursor: pointer; color: var(--text2); font-size: 12px; font-weight: 500; letter-spacing: .5px; text-transform: uppercase; border-bottom: 2px solid transparent; transition: all .15s; user-select: none; }
   .tab:hover { color: var(--text); }
   .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-  /* Main layout */
-  .main {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-  }
+  .main { display: flex; flex: 1; overflow: hidden; }
 
-  /* Sidebar (file tree) */
-  .sidebar {
-    width: 360px;
-    min-width: 260px;
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    flex-shrink: 0;
-  }
-  .sidebar-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 11px;
-    color: var(--text2);
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-  }
-  .tree-container {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px 0;
-  }
+  /* Sidebar */
+  .sidebar { width: 360px; min-width: 260px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--surface); flex-shrink: 0; }
+  .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .8px; }
+  .tree-container { flex: 1; overflow-y: auto; padding: 8px 0; }
   .tree-container::-webkit-scrollbar { width: 4px; }
-  .tree-container::-webkit-scrollbar-track { background: transparent; }
   .tree-container::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
-  /* Tree nodes */
+  /* Tree */
   .tree-node { user-select: none; }
-  .tree-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
-    cursor: pointer;
-    border-radius: 0;
-    transition: background 0.1s;
-    position: relative;
-  }
+  .tree-item { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; transition: background .1s; }
   .tree-item:hover { background: var(--surface2); }
-  .tree-item.selected { background: rgba(79, 140, 255, 0.1); }
+  .tree-item.selected { background: rgba(79,140,255,.1); }
   .tree-item .indent { flex-shrink: 0; }
   .tree-item .icon { font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
-  .tree-item .name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12.5px;
-  }
-  .tree-item .meta {
-    font-size: 10px;
-    color: var(--text3);
-    flex-shrink: 0;
-  }
-  .tree-item .s3-badge {
-    font-size: 9px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    background: rgba(34, 214, 122, 0.15);
-    color: var(--green);
-    letter-spacing: 0.3px;
-    flex-shrink: 0;
-  }
-  .checkbox {
-    width: 14px; height: 14px;
-    border: 1.5px solid var(--border2);
-    border-radius: 3px;
-    flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    transition: all 0.1s;
-    background: transparent;
-  }
-  .checkbox.checked {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-  .checkbox.checked::after {
-    content: '✓';
-    font-size: 9px;
-    color: white;
-    line-height: 1;
-  }
-  .chevron {
-    width: 14px; height: 14px;
-    display: inline-flex; align-items: center; justify-content: center;
-    color: var(--text3);
-    transition: transform 0.15s;
-    flex-shrink: 0;
-    font-size: 10px;
-  }
+  .tree-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+  .tree-item .meta { font-size: 10px; color: var(--text3); flex-shrink: 0; }
+  .s3-badge { font-size: 9px; padding: 1px 5px; border-radius: 3px; background: rgba(34,214,122,.15); color: var(--green); flex-shrink: 0; }
+  .checkbox { width: 14px; height: 14px; border: 1.5px solid var(--border2); border-radius: 3px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all .1s; }
+  .checkbox.checked { background: var(--accent); border-color: var(--accent); }
+  .checkbox.checked::after { content: '✓'; font-size: 9px; color: white; }
+  .chevron { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--text3); transition: transform .15s; flex-shrink: 0; font-size: 10px; }
   .chevron.open { transform: rotate(90deg); }
 
-  /* Right panel */
-  .panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .panel-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px 24px;
-  }
+  /* Panel */
+  .panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .panel-content { flex: 1; overflow-y: auto; padding: 20px 24px; }
   .panel-content::-webkit-scrollbar { width: 4px; }
   .panel-content::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
-  /* Config panel */
-  .config-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 24px;
-  }
+  /* Config */
+  .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
   .config-field { display: flex; flex-direction: column; gap: 6px; }
-  .config-field label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; }
-  .config-field input {
-    background: var(--surface2);
-    border: 1px solid var(--border2);
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 12px;
-    outline: none;
-    transition: border-color 0.15s;
-  }
+  .config-field label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .6px; }
+  .config-field input { background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: var(--mono); font-size: 12px; outline: none; transition: border-color .15s; }
   .config-field input:focus { border-color: var(--accent); }
 
   /* Selection bar */
-  .selection-bar {
-    padding: 12px 20px;
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
-  }
+  .selection-bar { padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
   .sel-count { color: var(--text2); font-size: 12px; flex: 1; }
   .sel-size { color: var(--text3); font-size: 11px; }
 
   /* Buttons */
-  .btn {
-    padding: 8px 16px;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    font-family: var(--mono);
-    font-size: 12px;
-    font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-primary {
-    background: var(--accent);
-    color: white;
-  }
+  .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; transition: all .15s; white-space: nowrap; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: white; }
   .btn-primary:hover:not(:disabled) { background: #6b9fff; }
-  .btn-secondary {
-    background: var(--surface2);
-    color: var(--text);
-    border: 1px solid var(--border2);
-  }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); }
   .btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .btn-green {
-    background: rgba(34, 214, 122, 0.15);
-    color: var(--green);
-    border: 1px solid rgba(34, 214, 122, 0.3);
-  }
-  .btn-green:hover:not(:disabled) { background: rgba(34, 214, 122, 0.25); }
+  .btn-green { background: rgba(34,214,122,.15); color: var(--green); border: 1px solid rgba(34,214,122,.3); }
+  .btn-green:hover:not(:disabled) { background: rgba(34,214,122,.25); }
+  .btn-red { background: rgba(255,77,109,.12); color: var(--red); border: 1px solid rgba(255,77,109,.3); }
+  .btn-red:hover:not(:disabled) { background: rgba(255,77,109,.22); }
   .btn-sm { padding: 5px 10px; font-size: 11px; }
 
   /* Progress overlay */
-  .progress-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.75);
-    backdrop-filter: blur(4px);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 100;
-    opacity: 0; pointer-events: none;
-    transition: opacity 0.2s;
-  }
+  .progress-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 100; opacity: 0; pointer-events: none; transition: opacity .2s; }
   .progress-overlay.visible { opacity: 1; pointer-events: all; }
-  .progress-card {
-    background: var(--surface);
-    border: 1px solid var(--border2);
-    border-radius: 12px;
-    padding: 28px 32px;
-    width: 440px;
-    display: flex; flex-direction: column; gap: 16px;
-  }
-  .progress-title {
-    font-family: var(--sans);
-    font-size: 18px;
-    font-weight: 700;
-  }
-  .progress-current { color: var(--text2); font-size: 12px; min-height: 18px; }
-  .progress-bar-wrap {
-    background: var(--surface2);
-    border-radius: 4px;
-    height: 6px;
-    overflow: hidden;
-  }
-  .progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    border-radius: 4px;
-    transition: width 0.3s;
-  }
-  .progress-stats {
-    display: flex; justify-content: space-between;
-    font-size: 11px; color: var(--text3);
-  }
-  .progress-errors {
-    background: rgba(255, 77, 109, 0.1);
-    border: 1px solid rgba(255, 77, 109, 0.3);
-    border-radius: 6px;
-    padding: 10px 14px;
-    font-size: 11px;
-    color: var(--red);
-    max-height: 120px;
-    overflow-y: auto;
-    display: none;
-  }
+  .progress-card { background: var(--surface); border: 1px solid var(--border2); border-radius: 12px; padding: 28px 32px; width: 460px; display: flex; flex-direction: column; gap: 14px; }
+  .progress-title { font-family: var(--sans); font-size: 18px; font-weight: 700; }
+  .progress-current { color: var(--text2); font-size: 12px; min-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .progress-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; overflow: hidden; }
+  .progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 4px; transition: width .4s ease; }
+  .progress-stats { display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); }
+  .progress-errors { background: rgba(255,77,109,.1); border: 1px solid rgba(255,77,109,.3); border-radius: 6px; padding: 10px 14px; font-size: 11px; color: var(--red); max-height: 100px; overflow-y: auto; display: none; }
   .progress-errors.visible { display: block; }
 
-  /* S3 list (restore tab) */
+  /* S3 list */
   .s3-list { display: flex; flex-direction: column; gap: 4px; }
-  .s3-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 12px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    cursor: pointer;
-    transition: border-color 0.1s;
-  }
+  .s3-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: border-color .1s; }
   .s3-item:hover { border-color: var(--border2); }
-  .s3-item.selected { border-color: var(--green); background: rgba(34,214,122,0.05); }
-  .s3-item .s3-name { flex: 1; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .s3-item .s3-path { font-size: 10px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
-  .s3-item .s3-size { font-size: 11px; color: var(--text3); flex-shrink: 0; }
-  .s3-item .local-tag {
-    font-size: 9px; padding: 2px 5px; border-radius: 3px; flex-shrink: 0;
-  }
-  .local-tag.exists { background: rgba(79,140,255,0.15); color: var(--accent); }
-  .local-tag.missing { background: rgba(255,140,66,0.15); color: var(--orange); }
+  .s3-item.selected { border-color: var(--green); background: rgba(34,214,122,.05); }
+  .s3-name { flex: 1; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .s3-path { font-size: 10px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .s3-size { font-size: 11px; color: var(--text3); flex-shrink: 0; }
+  .local-tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; flex-shrink: 0; }
+  .local-tag.exists { background: rgba(79,140,255,.15); color: var(--accent); }
+  .local-tag.missing { background: rgba(255,140,66,.15); color: var(--orange); }
 
-  /* Section headers */
-  .section-title {
-    font-family: var(--sans);
-    font-size: 13px;
-    font-weight: 700;
-    margin-bottom: 12px;
-    color: var(--text2);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .empty-state {
-    text-align: center; padding: 48px 24px;
-    color: var(--text3);
-  }
+  .section-title { font-family: var(--sans); font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: 1px; }
+  .empty-state { text-align: center; padding: 48px 24px; color: var(--text3); }
   .empty-state .icon { font-size: 32px; margin-bottom: 12px; }
   .empty-state p { font-size: 12px; line-height: 1.7; }
 
+  /* Confirm dialog */
+  .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 200; opacity: 0; pointer-events: none; transition: opacity .15s; }
+  .confirm-overlay.visible { opacity: 1; pointer-events: all; }
+  .confirm-card { background: var(--surface); border: 1px solid var(--border2); border-radius: 10px; padding: 24px 28px; width: 380px; display: flex; flex-direction: column; gap: 16px; }
+  .confirm-title { font-family: var(--sans); font-size: 16px; font-weight: 700; }
+  .confirm-body { font-size: 12px; color: var(--text2); line-height: 1.7; }
+  .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
   /* Notification */
-  .notif {
-    position: fixed; bottom: 20px; right: 20px;
-    background: var(--surface);
-    border: 1px solid var(--border2);
-    border-radius: 8px;
-    padding: 12px 18px;
-    font-size: 12px;
-    max-width: 320px;
-    z-index: 200;
-    transform: translateY(80px);
-    opacity: 0;
-    transition: all 0.25s;
-    display: flex; align-items: center; gap: 10px;
-  }
+  .notif { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 18px; font-size: 12px; max-width: 340px; z-index: 300; transform: translateY(80px); opacity: 0; transition: all .25s; display: flex; align-items: center; gap: 10px; }
   .notif.show { transform: translateY(0); opacity: 1; }
   .notif.success { border-left: 3px solid var(--green); }
   .notif.error { border-left: 3px solid var(--red); }
 
   .toolbar { display: flex; gap: 6px; align-items: center; }
-  .divider { width: 1px; height: 20px; background: var(--border); }
-
-  .badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    background: var(--accent);
-    color: white;
-    border-radius: 10px;
-    font-size: 10px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    font-weight: 700;
-  }
+  .badge { display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: white; border-radius: 10px; font-size: 10px; min-width: 18px; height: 18px; padding: 0 5px; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -416,9 +147,7 @@
     <div class="logo-dot"></div>
     S3 Offloader
   </div>
-  <div class="header-actions">
-    <span id="bucket-display" style="font-size:11px;color:var(--text3)">Loading...</span>
-  </div>
+  <span id="bucket-display" style="font-size:11px;color:var(--text3)">Loading...</span>
 </div>
 
 <div class="tabs">
@@ -441,26 +170,21 @@
         </div>
       </div>
       <div class="tree-container" id="tree-container">
-        <div class="empty-state">
-          <div class="icon">⏳</div>
-          <p>Loading file tree...</p>
-        </div>
+        <div class="empty-state"><div class="icon">⏳</div><p>Loading...</p></div>
       </div>
     </div>
-
     <div class="panel">
-      <div class="panel-content" id="local-panel-content">
+      <div class="panel-content">
         <div class="empty-state">
           <div class="icon">←</div>
-          <p>Select model files from the tree<br>then click "Send to S3"</p>
+          <p>Select model files from the tree<br>then send to S3 or delete locally</p>
         </div>
       </div>
       <div class="selection-bar">
         <span class="sel-count" id="sel-count">0 files selected</span>
         <span class="sel-size" id="sel-size"></span>
-        <button class="btn btn-primary" id="upload-btn" disabled onclick="startUpload()">
-          ☁ Send to S3
-        </button>
+        <button class="btn btn-red btn-sm" id="delete-local-btn" disabled onclick="confirmDeleteLocal()">🗑 Delete Local</button>
+        <button class="btn btn-primary" id="upload-btn" disabled onclick="startUpload()">☁ Send to S3</button>
       </div>
     </div>
   </div>
@@ -472,22 +196,19 @@
         <div class="section-title">Files on S3</div>
         <div class="toolbar">
           <button class="btn btn-secondary btn-sm" onclick="selectAllS3()">Select All</button>
-          <button class="btn btn-secondary btn-sm" onclick="refreshS3()">↻ Refresh</button>
+          <button class="btn btn-secondary btn-sm" onclick="selectNoneS3()">None</button>
+          <button class="btn btn-secondary btn-sm" onclick="refreshS3()">↻</button>
         </div>
       </div>
       <div id="s3-list" class="s3-list">
-        <div class="empty-state">
-          <div class="icon">☁️</div>
-          <p>Loading S3 files...</p>
-        </div>
+        <div class="empty-state"><div class="icon">⏳</div><p>Loading...</p></div>
       </div>
     </div>
     <div class="selection-bar">
       <span class="sel-count" id="s3-sel-count">0 files selected</span>
       <span class="sel-size" id="s3-sel-size"></span>
-      <button class="btn btn-green" id="restore-btn" disabled onclick="startRestore()">
-        ↓ Restore to Original Location
-      </button>
+      <button class="btn btn-red btn-sm" id="delete-s3-btn" disabled onclick="confirmDeleteS3()">🗑 Delete from S3</button>
+      <button class="btn btn-green" id="restore-btn" disabled onclick="startRestore()">↓ Restore</button>
     </div>
   </div>
 
@@ -498,7 +219,7 @@
       <div class="config-grid">
         <div class="config-field" style="grid-column:1/-1">
           <label>Models Root Directory</label>
-          <input type="text" id="cfg-root" placeholder="~/models" />
+          <input type="text" id="cfg-root" placeholder="~/ComfyUI/models" />
         </div>
         <div class="config-field">
           <label>S3 Bucket</label>
@@ -514,11 +235,11 @@
         </div>
       </div>
       <button class="btn btn-primary" onclick="saveConfig()">Save & Refresh</button>
-      <p style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.8;">
-        Credentials are read from <code style="color:var(--accent)">~/.aws/credentials</code> or env vars
-        <code style="color:var(--accent)">AWS_ACCESS_KEY_ID</code> / <code style="color:var(--accent)">AWS_SECRET_ACCESS_KEY</code>.<br>
-        The S3 key is built as: <code style="color:var(--accent)">{prefix}{relative_path}</code>.<br>
-        On restore, files go back to their exact original location — no questions asked.
+      <p style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.9;">
+        Credentials: <code style="color:var(--accent)">~/.aws/credentials</code> or env vars
+        <code style="color:var(--accent)">AWS_ACCESS_KEY_ID</code> / <code style="color:var(--accent)">AWS_SECRET_ACCESS_KEY</code><br>
+        S3 key format: <code style="color:var(--accent)">{prefix}{relative_path_from_root}</code><br>
+        Restore re-derives the local path from the S3 key — no metadata file needed.
       </p>
     </div>
   </div>
@@ -528,7 +249,7 @@
 <!-- Progress overlay -->
 <div class="progress-overlay" id="progress-overlay">
   <div class="progress-card">
-    <div class="progress-title" id="prog-title">Uploading...</div>
+    <div class="progress-title" id="prog-title">Working...</div>
     <div class="progress-current" id="prog-current">Preparing...</div>
     <div class="progress-bar-wrap">
       <div class="progress-bar" id="prog-bar" style="width:0%"></div>
@@ -541,22 +262,35 @@
   </div>
 </div>
 
+<!-- Confirm dialog -->
+<div class="confirm-overlay" id="confirm-overlay">
+  <div class="confirm-card">
+    <div class="confirm-title" id="confirm-title">Confirm</div>
+    <div class="confirm-body" id="confirm-body"></div>
+    <div class="confirm-actions">
+      <button class="btn btn-secondary btn-sm" onclick="closeConfirm()">Cancel</button>
+      <button class="btn btn-red btn-sm" id="confirm-ok-btn" onclick="confirmOk()">Delete</button>
+    </div>
+  </div>
+</div>
+
 <!-- Notification -->
 <div class="notif" id="notif"></div>
 
 <script>
 // --- State ---
-let selectedFiles = new Set();  // local paths
+let selectedFiles = new Set();   // local paths
 let selectedS3Keys = new Set();
 let treeData = null;
 let s3Data = [];
 let config = {};
+let confirmCallback = null;
 
 // --- Init ---
 async function init() {
   await loadConfig();
-  await refreshTree();
-  await refreshS3();
+  refreshTree();
+  refreshS3();
 }
 
 async function loadConfig() {
@@ -565,37 +299,35 @@ async function loadConfig() {
   document.getElementById("cfg-root").value = config.models_root;
   document.getElementById("cfg-bucket").value = config.s3_bucket;
   document.getElementById("cfg-prefix").value = config.s3_prefix;
-  document.getElementById("bucket-display").textContent = config.s3_bucket
-    ? `🪣 ${config.s3_bucket}`
-    : "No bucket set";
+  document.getElementById("bucket-display").textContent = config.s3_bucket ? `🪣 ${config.s3_bucket}` : "No bucket set";
 }
 
 async function saveConfig() {
-  const data = {
-    models_root: document.getElementById("cfg-root").value,
-    s3_bucket: document.getElementById("cfg-bucket").value,
-    s3_prefix: document.getElementById("cfg-prefix").value,
-    aws_profile: document.getElementById("cfg-profile").value,
-  };
-  await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  await fetch("/api/config", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      models_root: document.getElementById("cfg-root").value,
+      s3_bucket: document.getElementById("cfg-bucket").value,
+      s3_prefix: document.getElementById("cfg-prefix").value,
+      aws_profile: document.getElementById("cfg-profile").value,
+    })
+  });
   await loadConfig();
-  await refreshTree();
-  await refreshS3();
-  notify("Config saved ✓", "success");
+  refreshTree();
+  refreshS3();
+  notify("Config saved", "success");
   switchTab("local");
 }
 
 // --- Tabs ---
 function switchTab(name) {
   ["local", "s3", "config"].forEach(t => {
-    document.getElementById(`tab-${t}`).style.display = t === name ? (t === "local" ? "flex" : "flex") : "none";
+    document.getElementById(`tab-${t}`).style.display = t === name ? "flex" : "none";
     document.querySelector(`[data-tab="${t}"]`).classList.toggle("active", t === name);
   });
   if (name === "s3") refreshS3();
 }
-document.querySelectorAll(".tab").forEach(t => {
-  t.addEventListener("click", () => switchTab(t.dataset.tab));
-});
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 
 // --- File Tree ---
 async function refreshTree() {
@@ -606,20 +338,22 @@ async function refreshTree() {
     treeData = await r.json();
     selectedFiles.clear();
     renderTree();
-    updateSelectionBar();
+    updateLocalBar();
   } catch (e) {
     document.getElementById("tree-container").innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${e.message}</p></div>`;
   }
 }
 
 function renderTree() {
-  const container = document.getElementById("tree-container");
-  if (!treeData) return;
-  container.innerHTML = "";
-  if (treeData.type === "dir" && treeData.children && treeData.children.length > 0) {
-    treeData.children.forEach(child => container.appendChild(buildNode(child, 0)));
-  } else {
-    container.innerHTML = `<div class="empty-state"><div class="icon">🗂</div><p>No model files found in<br>${config.models_root}</p></div>`;
+  const c = document.getElementById("tree-container");
+  c.innerHTML = "";
+  const files = collectAllFiles(treeData);
+  if (!treeData || files.length === 0) {
+    c.innerHTML = `<div class="empty-state"><div class="icon">🗂</div><p>No model files found in<br><code style="color:var(--accent)">${config.models_root}</code></p></div>`;
+    return;
+  }
+  if (treeData.type === "dir" && treeData.children) {
+    treeData.children.forEach(child => c.appendChild(buildNode(child, 0)));
   }
 }
 
@@ -628,45 +362,34 @@ const openDirs = new Set();
 function buildNode(node, depth) {
   const div = document.createElement("div");
   div.className = "tree-node";
-
   const item = document.createElement("div");
   item.className = "tree-item";
 
   const indent = document.createElement("span");
   indent.className = "indent";
-  indent.style.width = (depth * 16) + "px";
-  indent.style.display = "inline-block";
+  indent.style.cssText = `width:${depth * 16}px;display:inline-block;flex-shrink:0`;
 
   if (node.type === "dir") {
     const isOpen = openDirs.has(node.path);
     const chev = document.createElement("span");
     chev.className = "chevron" + (isOpen ? " open" : "");
     chev.textContent = "▶";
-
     const icon = document.createElement("span");
     icon.className = "icon";
     icon.textContent = isOpen ? "📂" : "📁";
-
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = node.name;
-
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = node.file_count > 0 ? `${node.file_count}` : "";
+    meta.textContent = node.file_count > 0 ? node.file_count : "";
 
-    item.appendChild(indent);
-    item.appendChild(chev);
-    item.appendChild(icon);
-    item.appendChild(name);
-    item.appendChild(meta);
+    item.append(indent, chev, icon, name, meta);
 
     const childContainer = document.createElement("div");
-    if (isOpen && node.children) {
-      node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1)));
-    }
+    if (isOpen && node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1)));
 
-    item.addEventListener("click", (e) => {
+    item.addEventListener("click", e => {
       e.stopPropagation();
       if (openDirs.has(node.path)) {
         openDirs.delete(node.path);
@@ -677,37 +400,25 @@ function buildNode(node, depth) {
         openDirs.add(node.path);
         chev.classList.add("open");
         icon.textContent = "📂";
-        if (node.children) {
-          node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1)));
-        }
+        if (node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1)));
       }
     });
-
-    div.appendChild(item);
-    div.appendChild(childContainer);
+    div.append(item, childContainer);
   } else {
-    // File node
     const chk = document.createElement("span");
     chk.className = "checkbox" + (selectedFiles.has(node.path) ? " checked" : "");
-
     const icon = document.createElement("span");
     icon.className = "icon";
-    icon.textContent = getFileIcon(node.name);
-
+    icon.textContent = fileIcon(node.name);
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = node.name;
     name.title = node.path;
-
     const size = document.createElement("span");
     size.className = "meta";
     size.textContent = node.size_human;
 
-    item.appendChild(indent);
-    item.appendChild(chk);
-    item.appendChild(icon);
-    item.appendChild(name);
-    item.appendChild(size);
+    item.append(indent, chk, icon, name, size);
 
     if (node.on_s3) {
       const badge = document.createElement("span");
@@ -716,27 +427,20 @@ function buildNode(node, depth) {
       item.appendChild(badge);
     }
 
-    item.addEventListener("click", (e) => {
+    item.addEventListener("click", e => {
       e.stopPropagation();
-      if (selectedFiles.has(node.path)) {
-        selectedFiles.delete(node.path);
-        chk.classList.remove("checked");
-      } else {
-        selectedFiles.add(node.path);
-        chk.classList.add("checked");
-      }
-      updateSelectionBar();
+      selectedFiles.has(node.path) ? selectedFiles.delete(node.path) : selectedFiles.add(node.path);
+      chk.classList.toggle("checked", selectedFiles.has(node.path));
+      updateLocalBar();
     });
-
     div.appendChild(item);
   }
   return div;
 }
 
-function getFileIcon(name) {
+function fileIcon(name) {
   const ext = name.split(".").pop().toLowerCase();
-  const icons = { safetensors: "🧠", ckpt: "💾", pt: "🔬", pth: "🔬", bin: "📦", gguf: "⚡", ggml: "⚡", pkl: "🥒" };
-  return icons[ext] || "📄";
+  return { safetensors:"🧠", ckpt:"💾", pt:"🔬", pth:"🔬", bin:"📦", gguf:"⚡", ggml:"⚡", pkl:"🥒" }[ext] || "📄";
 }
 
 function collectAllFiles(node) {
@@ -746,35 +450,27 @@ function collectAllFiles(node) {
 }
 
 function selectAll() {
-  const all = collectAllFiles(treeData);
-  all.forEach(f => selectedFiles.add(f.path));
-  renderTree();
-  updateSelectionBar();
+  collectAllFiles(treeData).forEach(f => selectedFiles.add(f.path));
+  renderTree(); updateLocalBar();
 }
-
 function selectNone() {
-  selectedFiles.clear();
-  renderTree();
-  updateSelectionBar();
+  selectedFiles.clear(); renderTree(); updateLocalBar();
 }
 
-function updateSelectionBar() {
+function updateLocalBar() {
   const count = selectedFiles.size;
   document.getElementById("sel-count").textContent = `${count} file${count !== 1 ? "s" : ""} selected`;
-
-  // Calc total size
   const allFiles = collectAllFiles(treeData);
-  let totalSize = 0;
-  allFiles.forEach(f => { if (selectedFiles.has(f.path)) totalSize += f.size || 0; });
-  document.getElementById("sel-size").textContent = totalSize > 0 ? formatSize(totalSize) : "";
-
+  const totalSize = allFiles.filter(f => selectedFiles.has(f.path)).reduce((s, f) => s + (f.size || 0), 0);
+  document.getElementById("sel-size").textContent = totalSize > 0 ? fmtSize(totalSize) : "";
   document.getElementById("upload-btn").disabled = count === 0;
+  document.getElementById("delete-local-btn").disabled = count === 0;
 }
 
 // --- S3 List ---
 async function refreshS3() {
   if (!config.s3_bucket) {
-    document.getElementById("s3-list").innerHTML = `<div class="empty-state"><div class="icon">⚙️</div><p>Configure your S3 bucket in the Config tab</p></div>`;
+    document.getElementById("s3-list").innerHTML = `<div class="empty-state"><div class="icon">⚙️</div><p>Configure your S3 bucket in Config</p></div>`;
     return;
   }
   document.getElementById("s3-list").innerHTML = `<div class="empty-state"><div class="icon">⏳</div><p>Loading S3...</p></div>`;
@@ -785,26 +481,21 @@ async function refreshS3() {
     selectedS3Keys.clear();
     renderS3List();
     updateS3Bar();
-    // Update badge
     const badge = document.getElementById("s3-count-badge");
-    if (s3Data.length > 0) {
-      badge.textContent = s3Data.length;
-      badge.style.display = "inline-flex";
-    } else {
-      badge.style.display = "none";
-    }
+    badge.style.display = s3Data.length > 0 ? "inline-flex" : "none";
+    badge.textContent = s3Data.length;
   } catch (e) {
     document.getElementById("s3-list").innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${e.message}</p></div>`;
   }
 }
 
 function renderS3List() {
-  const container = document.getElementById("s3-list");
+  const c = document.getElementById("s3-list");
   if (s3Data.length === 0) {
-    container.innerHTML = `<div class="empty-state"><div class="icon">☁️</div><p>No files found on S3 at prefix<br><code style="color:var(--accent)">${config.s3_prefix}</code></p></div>`;
+    c.innerHTML = `<div class="empty-state"><div class="icon">☁️</div><p>No files at <code style="color:var(--accent)">${config.s3_prefix}</code></p></div>`;
     return;
   }
-  container.innerHTML = "";
+  c.innerHTML = "";
   s3Data.forEach(f => {
     const item = document.createElement("div");
     item.className = "s3-item" + (selectedS3Keys.has(f.s3_key) ? " selected" : "");
@@ -813,22 +504,12 @@ function renderS3List() {
     chk.className = "checkbox" + (selectedS3Keys.has(f.s3_key) ? " checked" : "");
 
     const icon = document.createElement("span");
-    icon.className = "icon";
-    icon.textContent = getFileIcon(f.rel_path);
     icon.style.fontSize = "14px";
+    icon.textContent = fileIcon(f.rel_path);
 
     const info = document.createElement("div");
-    info.style.flex = "1";
-    info.style.overflow = "hidden";
-    const nameEl = document.createElement("div");
-    nameEl.className = "s3-name";
-    nameEl.textContent = f.rel_path.split("/").pop();
-    nameEl.title = f.rel_path;
-    const pathEl = document.createElement("div");
-    pathEl.className = "s3-path";
-    pathEl.textContent = f.rel_path;
-    info.appendChild(nameEl);
-    info.appendChild(pathEl);
+    info.style.cssText = "flex:1;overflow:hidden;";
+    info.innerHTML = `<div class="s3-name" title="${f.rel_path}">${f.rel_path.split("/").pop()}</div><div class="s3-path">${f.rel_path}</div>`;
 
     const size = document.createElement("span");
     size.className = "s3-size";
@@ -838,122 +519,179 @@ function renderS3List() {
     tag.className = "local-tag " + (f.local_exists ? "exists" : "missing");
     tag.textContent = f.local_exists ? "local" : "offloaded";
 
-    item.appendChild(chk);
-    item.appendChild(icon);
-    item.appendChild(info);
-    item.appendChild(size);
-    item.appendChild(tag);
-
+    item.append(chk, icon, info, size, tag);
     item.addEventListener("click", () => {
-      if (selectedS3Keys.has(f.s3_key)) {
-        selectedS3Keys.delete(f.s3_key);
-        item.classList.remove("selected");
-        chk.classList.remove("checked");
-      } else {
-        selectedS3Keys.add(f.s3_key);
-        item.classList.add("selected");
-        chk.classList.add("checked");
-      }
+      selectedS3Keys.has(f.s3_key) ? selectedS3Keys.delete(f.s3_key) : selectedS3Keys.add(f.s3_key);
+      item.classList.toggle("selected", selectedS3Keys.has(f.s3_key));
+      chk.classList.toggle("checked", selectedS3Keys.has(f.s3_key));
       updateS3Bar();
     });
-
-    container.appendChild(item);
+    c.appendChild(item);
   });
 }
 
-function selectAllS3() {
-  s3Data.forEach(f => selectedS3Keys.add(f.s3_key));
-  renderS3List();
-  updateS3Bar();
-}
+function selectAllS3() { s3Data.forEach(f => selectedS3Keys.add(f.s3_key)); renderS3List(); updateS3Bar(); }
+function selectNoneS3() { selectedS3Keys.clear(); renderS3List(); updateS3Bar(); }
 
 function updateS3Bar() {
   const count = selectedS3Keys.size;
   document.getElementById("s3-sel-count").textContent = `${count} file${count !== 1 ? "s" : ""} selected`;
-  let totalSize = 0;
-  s3Data.forEach(f => { if (selectedS3Keys.has(f.s3_key)) totalSize += f.size || 0; });
-  document.getElementById("s3-sel-size").textContent = totalSize > 0 ? formatSize(totalSize) : "";
+  const total = s3Data.filter(f => selectedS3Keys.has(f.s3_key)).reduce((s, f) => s + (f.size || 0), 0);
+  document.getElementById("s3-sel-size").textContent = total > 0 ? fmtSize(total) : "";
   document.getElementById("restore-btn").disabled = count === 0;
+  document.getElementById("delete-s3-btn").disabled = count === 0;
 }
 
 // --- Upload ---
 async function startUpload() {
-  if (selectedFiles.size === 0) return;
+  if (!selectedFiles.size) return;
   const paths = Array.from(selectedFiles);
   const jobId = "upload_" + Date.now();
   await fetch("/api/upload", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ paths, job_id: jobId })
   });
-  trackProgress(jobId, "upload", paths.length, "Uploading to S3");
+  trackJob(jobId, `Uploading ${paths.length} file${paths.length !== 1 ? "s" : ""} to S3`, () => {
+    refreshTree(); refreshS3();
+  });
 }
 
 // --- Restore ---
 async function startRestore() {
-  if (selectedS3Keys.size === 0) return;
+  if (!selectedS3Keys.size) return;
   const keys = Array.from(selectedS3Keys);
   const jobId = "restore_" + Date.now();
   await fetch("/api/restore", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ keys, job_id: jobId })
   });
-  trackProgress(jobId, "restore", keys.length, "Restoring from S3");
+  trackJob(jobId, `Restoring ${keys.length} file${keys.length !== 1 ? "s" : ""}`, () => {
+    refreshTree(); refreshS3();
+  });
 }
 
-// --- Progress ---
-function trackProgress(jobId, type, total, title) {
+// --- Delete local ---
+function confirmDeleteLocal() {
+  const count = selectedFiles.size;
+  const allFiles = collectAllFiles(treeData);
+  const size = allFiles.filter(f => selectedFiles.has(f.path)).reduce((s, f) => s + (f.size || 0), 0);
+  showConfirm(
+    "Delete local files",
+    `This will permanently delete <strong>${count} file${count !== 1 ? "s" : ""}</strong> (${fmtSize(size)}) from your disk.<br><br>Make sure they are already uploaded to S3 before proceeding.`,
+    async () => {
+      const r = await fetch("/api/delete_local", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: Array.from(selectedFiles) })
+      });
+      const data = await r.json();
+      if (data.errors && data.errors.length) {
+        notify(`Deleted ${data.deleted}, ${data.errors.length} errors`, "error");
+      } else {
+        notify(`Deleted ${data.deleted} local file${data.deleted !== 1 ? "s" : ""}`, "success");
+      }
+      selectedFiles.clear();
+      refreshTree();
+    }
+  );
+}
+
+// --- Delete S3 ---
+function confirmDeleteS3() {
+  const count = selectedS3Keys.size;
+  const size = s3Data.filter(f => selectedS3Keys.has(f.s3_key)).reduce((s, f) => s + (f.size || 0), 0);
+  showConfirm(
+    "Delete from S3",
+    `This will permanently remove <strong>${count} file${count !== 1 ? "s" : ""}</strong> (${fmtSize(size)}) from S3.<br><br>⚠️ This cannot be undone.`,
+    async () => {
+      const r = await fetch("/api/delete_s3", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys: Array.from(selectedS3Keys) })
+      });
+      const data = await r.json();
+      if (data.errors && data.errors.length) {
+        notify(`Deleted ${data.deleted}, ${data.errors.length} errors`, "error");
+      } else {
+        notify(`Deleted ${data.deleted} file${data.deleted !== 1 ? "s" : ""} from S3`, "success");
+      }
+      selectedS3Keys.clear();
+      refreshS3();
+    }
+  );
+}
+
+// --- Progress tracker ---
+function trackJob(jobId, title, onDone) {
   const overlay = document.getElementById("progress-overlay");
   const bar = document.getElementById("prog-bar");
   const countEl = document.getElementById("prog-count");
   const pctEl = document.getElementById("prog-pct");
   const currentEl = document.getElementById("prog-current");
   const errorsEl = document.getElementById("prog-errors");
-  const titleEl = document.getElementById("prog-title");
 
-  titleEl.textContent = title;
+  document.getElementById("prog-title").textContent = title;
   errorsEl.className = "progress-errors";
+  bar.style.width = "0%";
+  countEl.textContent = "0 / ?";
+  pctEl.textContent = "0%";
+  currentEl.textContent = "Starting...";
   overlay.classList.add("visible");
 
-  const endpoint = type === "upload" ? `/api/upload/progress/${jobId}` : `/api/restore/progress/${jobId}`;
-
   const poll = setInterval(async () => {
-    const r = await fetch(endpoint);
-    const prog = await r.json();
+    try {
+      const r = await fetch(`/api/progress/${jobId}`);
+      const p = await r.json();
 
-    const done = prog.done || 0;
-    const pct = total > 0 ? Math.round(done / total * 100) : 0;
-    bar.style.width = pct + "%";
-    countEl.textContent = `${done} / ${total}`;
-    pctEl.textContent = pct + "%";
-    if (prog.current) currentEl.textContent = `→ ${prog.current}`;
+      bar.style.width = p.pct + "%";
+      pctEl.textContent = p.pct + "%";
+      countEl.textContent = `${p.done_files} / ${p.total_files} files`;
+      if (p.current) currentEl.textContent = `→ ${p.current}`;
 
-    if (prog.errors && prog.errors.length > 0) {
-      errorsEl.className = "progress-errors visible";
-      errorsEl.innerHTML = prog.errors.map(e => `<div>⚠ ${e.path || e.key}: ${e.error}</div>`).join("");
-    }
+      if (p.errors && p.errors.length > 0) {
+        errorsEl.className = "progress-errors visible";
+        errorsEl.innerHTML = p.errors.map(e => `<div>⚠ ${e.path || e.key}: ${e.error}</div>`).join("");
+      }
 
-    if (prog.finished) {
+      if (p.finished) {
+        clearInterval(poll);
+        bar.style.width = "100%";
+        setTimeout(() => {
+          overlay.classList.remove("visible");
+          const errs = (p.errors || []).length;
+          const ok = p.done_files - errs;
+          notify(`Done — ${ok} succeeded${errs > 0 ? `, ${errs} failed` : ""}`, errs > 0 ? "error" : "success");
+          onDone && onDone();
+        }, 500);
+      }
+    } catch (e) {
       clearInterval(poll);
-      setTimeout(() => {
-        overlay.classList.remove("visible");
-        const errs = (prog.errors || []).length;
-        const ok = done - errs;
-        notify(`Done: ${ok} file${ok !== 1 ? "s" : ""} ${type === "upload" ? "uploaded" : "restored"}${errs > 0 ? ` (${errs} errors)` : ""}`, errs > 0 ? "error" : "success");
-        refreshTree();
-        refreshS3();
-      }, 600);
+      overlay.classList.remove("visible");
+      notify("Lost connection to server", "error");
     }
-  }, 500);
+  }, 400);
+}
+
+// --- Confirm dialog ---
+function showConfirm(title, body, cb) {
+  document.getElementById("confirm-title").textContent = title;
+  document.getElementById("confirm-body").innerHTML = body;
+  confirmCallback = cb;
+  document.getElementById("confirm-overlay").classList.add("visible");
+}
+function closeConfirm() {
+  document.getElementById("confirm-overlay").classList.remove("visible");
+  confirmCallback = null;
+}
+function confirmOk() {
+  closeConfirm();
+  confirmCallback && confirmCallback();
 }
 
 // --- Utils ---
-function formatSize(bytes) {
-  const units = ["B", "KB", "MB", "GB"];
+function fmtSize(b) {
+  const u = ["B","KB","MB","GB"];
   let i = 0;
-  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
-  return `${bytes.toFixed(1)} ${units[i]}`;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return `${b.toFixed(1)} ${u[i]}`;
 }
 
 function notify(msg, type = "success") {
@@ -963,7 +701,6 @@ function notify(msg, type = "success") {
   setTimeout(() => el.classList.remove("show"), 3500);
 }
 
-// --- Bootstrap ---
 init();
 </script>
 </body>

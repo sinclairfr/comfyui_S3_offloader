@@ -37,4 +37,3 @@ Aucun fichier de metadata externe, tout est dans la structure du S3 key.
 
 Utilise boto3 standard : `~/.aws/credentials`, variables d'env, ou IAM role.  
 Ou `AWS_PROFILE` dans `.env` pour un profil nommé.
-# comfyui_S3_offloader
