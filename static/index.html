@@ -587,12 +587,8 @@ async function startRestore() {
 
 // --- Delete local ---
 async function confirmDeleteLocal() {
-  const count = selectedFiles.size;
-  if (count === 0) return;
-  const allFiles = collectAllFiles(treeData);
-  const size = allFiles.filter(f => selectedFiles.has(f.path)).reduce((s, f) => s + (f.size || 0), 0);
-  if (!window.confirm(`Supprimer définitivement ${count} fichier(s) (${fmtSize(size)}) du disque ?\n\nAssure-toi qu'ils sont bien sur S3 avant de confirmer.`)) return;
   const paths = Array.from(selectedFiles);
+  if (paths.length === 0) return;
   selectedFiles.clear();
   updateLocalBar();
   try {
@@ -604,22 +600,18 @@ async function confirmDeleteLocal() {
     if (data.errors && data.errors.length) {
       notify(`Supprimé ${data.deleted}, ${data.errors.length} erreur(s): ${data.errors.map(e=>e.error).join(", ")}`, "error");
     } else {
-      notify(`Supprimé ${data.deleted} fichier(s) local`, "success");
+      notify(`Supprimé ${data.deleted} fichier(s)`, "success");
     }
   } catch (e) {
     notify("Erreur réseau: " + e.message, "error");
   }
   refreshTree();
-  refreshS3();
 }
 
 // --- Delete S3 ---
 async function confirmDeleteS3() {
-  const count = selectedS3Keys.size;
-  if (count === 0) return;
-  const size = s3Data.filter(f => selectedS3Keys.has(f.s3_key)).reduce((s, f) => s + (f.size || 0), 0);
-  if (!window.confirm(`Supprimer définitivement ${count} fichier(s) (${fmtSize(size)}) de S3 ?\n\n⚠️ Irréversible.`)) return;
   const keys = Array.from(selectedS3Keys);
+  if (keys.length === 0) return;
   selectedS3Keys.clear();
   updateS3Bar();
   try {
@@ -637,7 +629,6 @@ async function confirmDeleteS3() {
     notify("Erreur réseau: " + e.message, "error");
   }
   refreshS3();
-  refreshTree();
 }
 
 // --- Progress tracker ---
