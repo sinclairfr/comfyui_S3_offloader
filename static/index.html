@@ -122,14 +122,6 @@
   .empty-state .icon { font-size: 32px; margin-bottom: 12px; }
   .empty-state p { font-size: 12px; line-height: 1.7; }
 
-  /* Confirm dialog */
-  .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 200; opacity: 0; pointer-events: none; transition: opacity .15s; }
-  .confirm-overlay.visible { opacity: 1; pointer-events: all; }
-  .confirm-card { background: var(--surface); border: 1px solid var(--border2); border-radius: 10px; padding: 24px 28px; width: 380px; display: flex; flex-direction: column; gap: 16px; }
-  .confirm-title { font-family: var(--sans); font-size: 16px; font-weight: 700; }
-  .confirm-body { font-size: 12px; color: var(--text2); line-height: 1.7; }
-  .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
-
   /* Notification */
   .notif { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 18px; font-size: 12px; max-width: 340px; z-index: 300; transform: translateY(80px); opacity: 0; transition: all .25s; display: flex; align-items: center; gap: 10px; }
   .notif.show { transform: translateY(0); opacity: 1; }
@@ -290,29 +282,16 @@
   </div>
 </div>
 
-<!-- Confirm dialog -->
-<div class="confirm-overlay" id="confirm-overlay">
-  <div class="confirm-card">
-    <div class="confirm-title" id="confirm-title">Confirm</div>
-    <div class="confirm-body" id="confirm-body"></div>
-    <div class="confirm-actions">
-      <button class="btn btn-secondary btn-sm" onclick="closeConfirm()">Cancel</button>
-      <button class="btn btn-red btn-sm" id="confirm-ok-btn" onclick="confirmOk()">Delete</button>
-    </div>
-  </div>
-</div>
-
 <!-- Notification -->
 <div class="notif" id="notif"></div>
 
 <script>
 // --- State ---
-let selectedFiles = new Set();   // local paths
+let selectedFiles = new Set();
 let selectedS3Keys = new Set();
 let treeData = null;
 let s3Data = [];
 let config = {};
-let confirmCallback = null;
 
 // --- Init ---
 async function init() {
@@ -607,54 +586,58 @@ async function startRestore() {
 }
 
 // --- Delete local ---
-function confirmDeleteLocal() {
+async function confirmDeleteLocal() {
   const count = selectedFiles.size;
+  if (count === 0) return;
   const allFiles = collectAllFiles(treeData);
   const size = allFiles.filter(f => selectedFiles.has(f.path)).reduce((s, f) => s + (f.size || 0), 0);
-  showConfirm(
-    "Delete local files",
-    `This will permanently delete <strong>${count} file${count !== 1 ? "s" : ""}</strong> (${fmtSize(size)}) from your disk.<br><br>Make sure they are already uploaded to S3 before proceeding.`,
-    async () => {
-      const r = await fetch("/api/delete_local", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paths: Array.from(selectedFiles) })
-      });
-      const data = await r.json();
-      if (data.errors && data.errors.length) {
-        notify(`Deleted ${data.deleted}, ${data.errors.length} errors`, "error");
-      } else {
-        notify(`Deleted ${data.deleted} local file${data.deleted !== 1 ? "s" : ""}`, "success");
-      }
-      selectedFiles.clear();
-      refreshTree();
-      refreshS3();
+  if (!window.confirm(`Supprimer définitivement ${count} fichier(s) (${fmtSize(size)}) du disque ?\n\nAssure-toi qu'ils sont bien sur S3 avant de confirmer.`)) return;
+  const paths = Array.from(selectedFiles);
+  selectedFiles.clear();
+  updateLocalBar();
+  try {
+    const r = await fetch("/api/delete_local", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths })
+    });
+    const data = await r.json();
+    if (data.errors && data.errors.length) {
+      notify(`Supprimé ${data.deleted}, ${data.errors.length} erreur(s): ${data.errors.map(e=>e.error).join(", ")}`, "error");
+    } else {
+      notify(`Supprimé ${data.deleted} fichier(s) local`, "success");
     }
-  );
+  } catch (e) {
+    notify("Erreur réseau: " + e.message, "error");
+  }
+  refreshTree();
+  refreshS3();
 }
 
 // --- Delete S3 ---
-function confirmDeleteS3() {
+async function confirmDeleteS3() {
   const count = selectedS3Keys.size;
+  if (count === 0) return;
   const size = s3Data.filter(f => selectedS3Keys.has(f.s3_key)).reduce((s, f) => s + (f.size || 0), 0);
-  showConfirm(
-    "Delete from S3",
-    `This will permanently remove <strong>${count} file${count !== 1 ? "s" : ""}</strong> (${fmtSize(size)}) from S3.<br><br>⚠️ This cannot be undone.`,
-    async () => {
-      const r = await fetch("/api/delete_s3", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: Array.from(selectedS3Keys) })
-      });
-      const data = await r.json();
-      if (data.errors && data.errors.length) {
-        notify(`Deleted ${data.deleted}, ${data.errors.length} errors`, "error");
-      } else {
-        notify(`Deleted ${data.deleted} file${data.deleted !== 1 ? "s" : ""} from S3`, "success");
-      }
-      selectedS3Keys.clear();
-      refreshS3();
-      refreshTree();
+  if (!window.confirm(`Supprimer définitivement ${count} fichier(s) (${fmtSize(size)}) de S3 ?\n\n⚠️ Irréversible.`)) return;
+  const keys = Array.from(selectedS3Keys);
+  selectedS3Keys.clear();
+  updateS3Bar();
+  try {
+    const r = await fetch("/api/delete_s3", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys })
+    });
+    const data = await r.json();
+    if (data.errors && data.errors.length) {
+      notify(`Supprimé ${data.deleted}, ${data.errors.length} erreur(s): ${data.errors.map(e=>e.error).join(", ")}`, "error");
+    } else {
+      notify(`Supprimé ${data.deleted} fichier(s) de S3`, "success");
     }
-  );
+  } catch (e) {
+    notify("Erreur réseau: " + e.message, "error");
+  }
+  refreshS3();
+  refreshTree();
 }
 
 // --- Progress tracker ---
@@ -706,23 +689,6 @@ function trackJob(jobId, title, onDone) {
       notify("Lost connection to server", "error");
     }
   }, 400);
-}
-
-// --- Confirm dialog ---
-function showConfirm(title, body, cb) {
-  document.getElementById("confirm-title").textContent = title;
-  document.getElementById("confirm-body").innerHTML = body;
-  confirmCallback = cb;
-  document.getElementById("confirm-overlay").classList.add("visible");
-}
-function closeConfirm() {
-  document.getElementById("confirm-overlay").classList.remove("visible");
-  confirmCallback = null;
-}
-function confirmOk() {
-  const cb = confirmCallback;
-  closeConfirm();
-  cb && cb();
 }
 
 // --- Logs ---
