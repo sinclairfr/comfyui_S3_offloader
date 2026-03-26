@@ -720,8 +720,9 @@ function closeConfirm() {
   confirmCallback = null;
 }
 function confirmOk() {
+  const cb = confirmCallback;
   closeConfirm();
-  confirmCallback && confirmCallback();
+  cb && cb();
 }
 
 // --- Logs ---
