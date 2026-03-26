@@ -32,13 +32,17 @@ MAX_LOGS = 500
 
 def add_log(level: str, message: str):
     """Append a log entry. level: info | success | error | warning"""
-    logs.append({
+    entry = {
         "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "level": level,
         "msg": message,
-    })
+    }
+    logs.append(entry)
     if len(logs) > MAX_LOGS:
         logs.pop(0)
+    # Also print to CLI
+    prefix = {"info": "ℹ️ ", "success": "✅", "error": "❌", "warning": "⚠️ "}.get(level, "  ")
+    print(f"[{entry['ts']}] {prefix} {message}", flush=True)
 
 def get_s3_client():
     session = boto3.Session(profile_name=AWS_PROFILE) if AWS_PROFILE else boto3.Session()
@@ -278,6 +282,7 @@ def get_progress(job_id):
 def delete_local():
     """Hard-delete local files. Only call this after confirming S3 upload succeeded."""
     paths = request.json.get("paths", [])
+    print(f"[delete_local] received {len(paths)} path(s): {paths}", flush=True)
     deleted, errors = [], []
     for path in paths:
         try:
@@ -296,6 +301,7 @@ def delete_local():
 def delete_s3():
     """Delete files from S3 bucket."""
     keys = request.json.get("keys", [])
+    print(f"[delete_s3] received {len(keys)} key(s): {keys}", flush=True)
     if not S3_BUCKET:
         return jsonify({"error": "No S3 bucket configured"}), 400
     s3 = get_s3_client()
