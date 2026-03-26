@@ -5,6 +5,7 @@ Scans local model directories, uploads to S3 with path metadata for 1-click rest
 
 import os
 import threading
+import datetime
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 import boto3
@@ -24,6 +25,20 @@ AWS_PROFILE = os.getenv("AWS_PROFILE", None)
 
 # In-memory progress store — keyed by job_id
 jobs = {}
+
+# In-memory log store
+logs = []
+MAX_LOGS = 500
+
+def add_log(level: str, message: str):
+    """Append a log entry. level: info | success | error | warning"""
+    logs.append({
+        "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "level": level,
+        "msg": message,
+    })
+    if len(logs) > MAX_LOGS:
+        logs.pop(0)
 
 def get_s3_client():
     session = boto3.Session(profile_name=AWS_PROFILE) if AWS_PROFILE else boto3.Session()
@@ -159,6 +174,8 @@ def upload_files():
         "current": "", "errors": [], "finished": False,
     }
 
+    add_log("info", f"Upload started — {len(paths)} file(s)")
+
     def do_upload():
         s3 = get_s3_client()
         job = jobs[job_id]
@@ -172,9 +189,13 @@ def upload_files():
                     return cb
                 s3.upload_file(path, S3_BUCKET, s3_key, Callback=make_callback(job))
                 job["done_files"] += 1
+                add_log("success", f"Uploaded: {os.path.basename(path)}")
             except Exception as e:
                 job["errors"].append({"path": path, "error": str(e)})
                 job["done_files"] += 1
+                add_log("error", f"Upload failed {os.path.basename(path)}: {e}")
+        errs = len(job["errors"])
+        add_log("info", f"Upload done — {job['done_files'] - errs} succeeded, {errs} errors")
         job["finished"] = True
 
     threading.Thread(target=do_upload, daemon=True).start()
@@ -205,6 +226,8 @@ def restore_files():
         "current": "", "errors": [], "finished": False,
     }
 
+    add_log("info", f"Restore started — {len(keys)} file(s)")
+
     def do_restore():
         s3 = get_s3_client()
         job = jobs[job_id]
@@ -219,9 +242,13 @@ def restore_files():
                     return cb
                 s3.download_file(S3_BUCKET, key, local_path, Callback=make_callback(job))
                 job["done_files"] += 1
+                add_log("success", f"Restored: {os.path.basename(local_path)}")
             except Exception as e:
                 job["errors"].append({"key": key, "error": str(e)})
                 job["done_files"] += 1
+                add_log("error", f"Restore failed {os.path.basename(local_path)}: {e}")
+        errs = len(job["errors"])
+        add_log("info", f"Restore done — {job['done_files'] - errs} succeeded, {errs} errors")
         job["finished"] = True
 
     threading.Thread(target=do_restore, daemon=True).start()
@@ -256,8 +283,11 @@ def delete_local():
         try:
             os.remove(path)
             deleted.append(path)
+            add_log("success", f"Deleted local: {os.path.basename(path)}")
         except Exception as e:
             errors.append({"path": path, "error": str(e)})
+            add_log("error", f"Failed to delete local {os.path.basename(path)}: {e}")
+    add_log("info", f"Delete local — {len(deleted)} deleted, {len(errors)} errors")
     return jsonify({"deleted": len(deleted), "errors": errors})
 
 # --- Delete from S3 ---
@@ -274,9 +304,24 @@ def delete_s3():
         try:
             s3.delete_object(Bucket=S3_BUCKET, Key=key)
             deleted += 1
+            add_log("success", f"Deleted from S3: {key.split('/')[-1]}")
         except Exception as e:
             errors.append({"key": key, "error": str(e)})
+            add_log("error", f"Failed to delete S3 {key.split('/')[-1]}: {e}")
+    add_log("info", f"Delete S3 — {deleted} deleted, {len(errors)} errors")
     return jsonify({"deleted": deleted, "errors": errors})
+
+
+# --- Logs ---
+
+@app.route("/api/logs")
+def get_logs():
+    return jsonify(list(reversed(logs)))  # most recent first
+
+@app.route("/api/logs", methods=["DELETE"])
+def clear_logs():
+    logs.clear()
+    return jsonify({"status": "ok"})
 
 
 if __name__ == "__main__":

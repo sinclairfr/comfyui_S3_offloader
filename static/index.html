@@ -138,6 +138,17 @@
 
   .toolbar { display: flex; gap: 6px; align-items: center; }
   .badge { display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: white; border-radius: 10px; font-size: 10px; min-width: 18px; height: 18px; padding: 0 5px; font-weight: 700; }
+
+  /* Logs */
+  .log-list { display: flex; flex-direction: column; gap: 2px; }
+  .log-entry { display: flex; gap: 12px; padding: 6px 10px; border-radius: 4px; font-size: 11px; background: var(--surface2); line-height: 1.5; }
+  .log-ts { color: var(--text3); flex-shrink: 0; white-space: nowrap; }
+  .log-level { flex-shrink: 0; width: 58px; font-weight: 700; text-transform: uppercase; font-size: 10px; }
+  .log-level.info { color: var(--accent); }
+  .log-level.success { color: var(--green); }
+  .log-level.error { color: var(--red); }
+  .log-level.warning { color: var(--orange); }
+  .log-msg { flex: 1; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -154,6 +165,7 @@
   <div class="tab active" data-tab="local">📁 Local Files</div>
   <div class="tab" data-tab="s3">☁️ On S3 <span id="s3-count-badge" style="display:none" class="badge">0</span></div>
   <div class="tab" data-tab="config">⚙️ Config</div>
+  <div class="tab" data-tab="logs">📋 Logs</div>
 </div>
 
 <div class="main">
@@ -209,6 +221,22 @@
       <span class="sel-size" id="s3-sel-size"></span>
       <button class="btn btn-red btn-sm" id="delete-s3-btn" disabled onclick="confirmDeleteS3()">🗑 Delete from S3</button>
       <button class="btn btn-green" id="restore-btn" disabled onclick="startRestore()">↓ Restore</button>
+    </div>
+  </div>
+
+  <!-- LOGS TAB -->
+  <div id="tab-logs" class="panel" style="display:none;">
+    <div class="panel-content">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div class="section-title">Activity Logs</div>
+        <div class="toolbar">
+          <button class="btn btn-secondary btn-sm" onclick="refreshLogs()">↻ Refresh</button>
+          <button class="btn btn-red btn-sm" onclick="clearLogs()">🗑 Clear</button>
+        </div>
+      </div>
+      <div id="log-list" class="log-list">
+        <div class="empty-state"><div class="icon">📋</div><p>No logs yet</p></div>
+      </div>
     </div>
   </div>
 
@@ -320,12 +348,20 @@ async function saveConfig() {
 }
 
 // --- Tabs ---
+let logPollInterval = null;
+
 function switchTab(name) {
-  ["local", "s3", "config"].forEach(t => {
+  ["local", "s3", "config", "logs"].forEach(t => {
     document.getElementById(`tab-${t}`).style.display = t === name ? "flex" : "none";
     document.querySelector(`[data-tab="${t}"]`).classList.toggle("active", t === name);
   });
+  clearInterval(logPollInterval);
   if (name === "s3") refreshS3();
+  if (name === "local") refreshTree();
+  if (name === "logs") {
+    refreshLogs();
+    logPollInterval = setInterval(refreshLogs, 3000);
+  }
 }
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 
@@ -591,6 +627,7 @@ function confirmDeleteLocal() {
       }
       selectedFiles.clear();
       refreshTree();
+      refreshS3();
     }
   );
 }
@@ -615,6 +652,7 @@ function confirmDeleteS3() {
       }
       selectedS3Keys.clear();
       refreshS3();
+      refreshTree();
     }
   );
 }
@@ -684,6 +722,37 @@ function closeConfirm() {
 function confirmOk() {
   closeConfirm();
   confirmCallback && confirmCallback();
+}
+
+// --- Logs ---
+async function refreshLogs() {
+  try {
+    const r = await fetch("/api/logs");
+    const data = await r.json();
+    renderLogs(data);
+  } catch (e) {
+    // silently ignore
+  }
+}
+
+function renderLogs(entries) {
+  const c = document.getElementById("log-list");
+  if (!entries || entries.length === 0) {
+    c.innerHTML = `<div class="empty-state"><div class="icon">📋</div><p>No logs yet</p></div>`;
+    return;
+  }
+  c.innerHTML = "";
+  entries.forEach(e => {
+    const row = document.createElement("div");
+    row.className = "log-entry";
+    row.innerHTML = `<span class="log-ts">${e.ts}</span><span class="log-level ${e.level}">${e.level}</span><span class="log-msg">${e.msg}</span>`;
+    c.appendChild(row);
+  });
+}
+
+async function clearLogs() {
+  await fetch("/api/logs", { method: "DELETE" });
+  refreshLogs();
 }
 
 // --- Utils ---
