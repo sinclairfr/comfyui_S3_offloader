@@ -6,6 +6,8 @@ Scans local model directories, uploads to S3 with path metadata for 1-click rest
 import os
 import threading
 import datetime
+import hashlib
+import re
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 import boto3
@@ -23,12 +25,73 @@ S3_BUCKET = os.getenv("S3_BUCKET", "")
 S3_PREFIX = os.getenv("S3_PREFIX", "models-offload/")
 AWS_PROFILE = os.getenv("AWS_PROFILE", None)
 
+
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_personal_paths(raw: str):
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.replace("\n", ",").split(",")]
+    return [p for p in parts if p]
+
+
+def parse_csv(raw: str):
+    if not raw:
+        return []
+    return [p.strip() for p in raw.replace("\n", ",").split(",") if p.strip()]
+
+
+DEFAULT_PERSONAL_PATHS = [
+    "/workspace/ComfyUI/custom_nodes",
+    "/workspace/ComfyUI/user",
+    "/workspacecomfyui_S3_offloader",
+    "/workspace/medo_start.sh",
+]
+
+INCLUDE_PERSONAL_STUFF = env_bool("INCLUDE_PERSONAL_STUFF", False)
+PERSONAL_PATHS = parse_personal_paths(
+    os.getenv("PERSONAL_PATHS", ",".join(DEFAULT_PERSONAL_PATHS))
+)
+SCAN_EXCLUDE_DIRS = set(
+    p.lower() for p in parse_csv(
+        os.getenv(
+            "SCAN_EXCLUDE_DIRS",
+            ".git,__pycache__,.venv,venv,node_modules,.cache,.mypy_cache,.pytest_cache",
+        )
+    )
+)
+
 # In-memory progress store — keyed by job_id
 jobs = {}
 
 # In-memory log store
 logs = []
 MAX_LOGS = 500
+
+# In-memory scan caches (to avoid expensive full rescan on every UI refresh)
+FILES_CACHE_TTL_SECONDS = int(os.getenv("FILES_CACHE_TTL_SECONDS", "20"))
+S3_KEYS_CACHE_TTL_SECONDS = int(os.getenv("S3_KEYS_CACHE_TTL_SECONDS", "30"))
+
+cache_lock = threading.Lock()
+scan_lock = threading.Lock()
+scan_in_progress = False
+
+files_cache = {
+    "cache_key": None,  # (MODELS_ROOT, S3_BUCKET, S3_PREFIX, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS)
+    "tree": None,
+    "scanned_at": None,
+}
+
+s3_keys_cache = {
+    "cache_key": None,  # (S3_BUCKET, S3_PREFIX)
+    "keys": set(),
+    "fetched_at": None,
+}
 
 def add_log(level: str, message: str):
     """Append a log entry. level: info | success | error | warning"""
@@ -51,10 +114,92 @@ def get_s3_client():
 def is_model_file(path: Path) -> bool:
     return path.suffix.lower() in MODEL_EXTENSIONS
 
+
+def path_slug(path_str: str) -> str:
+    expanded = os.path.expanduser(path_str)
+    name = Path(expanded).name or "root"
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "-", name).strip("-") or "path"
+    digest = hashlib.sha1(expanded.encode("utf-8")).hexdigest()[:8]
+    return f"{safe_name}-{digest}"
+
+
+def get_sources():
+    sources = [{
+        "type": "models",
+        "label": "Models",
+        "root": MODELS_ROOT,
+        "key_prefix": "models",
+    }]
+    if INCLUDE_PERSONAL_STUFF:
+        for raw in PERSONAL_PATHS:
+            expanded = os.path.expanduser(raw)
+            sources.append({
+                "type": "personal",
+                "label": f"Personal · {Path(expanded).name or expanded}",
+                "root": expanded,
+                "key_prefix": f"personal/{path_slug(raw)}",
+            })
+    return sources
+
+
+def resolve_source_for_local_path(local_path: str):
+    p = Path(local_path).resolve()
+    for source in get_sources():
+        root = Path(source["root"]).resolve()
+        if root.is_file() and p == root:
+            return source
+        if root.is_dir():
+            try:
+                p.relative_to(root)
+                return source
+            except Exception:
+                continue
+    return None
+
+
+def source_rel_path(local_path: str, source: dict) -> str:
+    root = Path(source["root"]).resolve()
+    local = Path(local_path).resolve()
+    if root.is_file():
+        return root.name
+    return str(local.relative_to(root)).replace("\\", "/")
+
+
 def get_s3_key(local_path: str) -> str:
-    """S3 key = prefix + relative path from MODELS_ROOT. This is how restore knows where to put the file back."""
-    rel = os.path.relpath(local_path, MODELS_ROOT)
-    return S3_PREFIX + rel.replace("\\", "/")
+    """S3 key = prefix + source-rooted path. Restore uses this path to place files back."""
+    source = resolve_source_for_local_path(local_path)
+    if source is None:
+        rel = os.path.relpath(local_path, MODELS_ROOT).replace("\\", "/")
+        return f"{S3_PREFIX}{rel}"
+    rel = source_rel_path(local_path, source)
+    return f"{S3_PREFIX}{source['key_prefix']}/{rel}"
+
+
+def local_path_from_s3_key(key: str) -> str:
+    rel = key[len(S3_PREFIX):] if key.startswith(S3_PREFIX) else key
+    parts = rel.split("/")
+
+    # New format for model files: models/<rel_path>
+    if len(parts) >= 2 and parts[0] == "models":
+        return os.path.join(MODELS_ROOT, "/".join(parts[1:]))
+
+    # New format for personal files: personal/<slug>/<rel_path>
+    if len(parts) >= 3 and parts[0] == "personal":
+        slug = parts[1]
+        tail = "/".join(parts[2:])
+        for raw in PERSONAL_PATHS:
+            expanded = os.path.expanduser(raw)
+            if path_slug(raw) != slug:
+                continue
+            root = Path(expanded)
+            if root.is_file():
+                if not tail or tail == root.name:
+                    return str(root)
+                return str(root.parent / tail)
+            return str(root / tail)
+
+    # Backward compatibility (legacy keys at prefix root)
+    return os.path.join(MODELS_ROOT, rel)
 
 def format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB"]:
@@ -62,6 +207,170 @@ def format_size(b: int) -> str:
             return f"{b:.1f} {unit}"
         b /= 1024
     return f"{b:.1f} TB"
+
+
+def invalidate_scan_caches():
+    """Invalidate local/s3 scan caches (used when config changes)."""
+    with cache_lock:
+        files_cache["cache_key"] = None
+        files_cache["tree"] = None
+        files_cache["scanned_at"] = None
+        s3_keys_cache["cache_key"] = None
+        s3_keys_cache["keys"] = set()
+        s3_keys_cache["fetched_at"] = None
+
+
+def get_s3_keys_cached(force_refresh: bool = False):
+    if not S3_BUCKET:
+        return set()
+
+    now = datetime.datetime.now()
+    cache_key = (S3_BUCKET, S3_PREFIX)
+
+    with cache_lock:
+        cached_key = s3_keys_cache["cache_key"]
+        fetched_at = s3_keys_cache["fetched_at"]
+        if (
+            not force_refresh
+            and cached_key == cache_key
+            and fetched_at
+            and (now - fetched_at).total_seconds() < S3_KEYS_CACHE_TTL_SECONDS
+        ):
+            return set(s3_keys_cache["keys"])
+
+    keys = set()
+    try:
+        s3 = get_s3_client()
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=S3_PREFIX):
+            for obj in page.get("Contents", []):
+                keys.add(obj["Key"])
+    except Exception:
+        # Keep serving with stale/empty keys if S3 lookup fails
+        with cache_lock:
+            if s3_keys_cache["cache_key"] == cache_key:
+                return set(s3_keys_cache["keys"])
+        return set()
+
+    with cache_lock:
+        s3_keys_cache["cache_key"] = cache_key
+        s3_keys_cache["keys"] = keys
+        s3_keys_cache["fetched_at"] = now
+    return keys
+
+
+def build_files_tree(path: Path, rel_root: Path, s3_keys: set, file_filter):
+    node = {
+        "name": path.name,
+        "path": str(path),
+        "rel_path": str(path.relative_to(rel_root)),
+        "type": "dir" if path.is_dir() else "file",
+    }
+    if path.is_dir():
+        children = []
+        try:
+            for child in sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+                if child.is_symlink():
+                    continue
+                if child.is_dir() or file_filter(child):
+                    if child.is_dir() and child.name.lower() in SCAN_EXCLUDE_DIRS:
+                        continue
+                    children.append(build_files_tree(child, rel_root, s3_keys, file_filter))
+        except (PermissionError, OSError):
+            pass
+        node["children"] = children
+        node["file_count"] = sum(1 for c in children if c["type"] == "file")
+    else:
+        stat = path.stat()
+        s3_key = get_s3_key(str(path))
+        node["size"] = stat.st_size
+        node["size_human"] = format_size(stat.st_size)
+        node["s3_key"] = s3_key
+        node["on_s3"] = s3_key in s3_keys
+    return node
+
+
+def scan_files_tree(force_s3_refresh: bool = False):
+    s3_keys = get_s3_keys_cached(force_refresh=force_s3_refresh)
+    source_trees = []
+
+    for source in get_sources():
+        root = Path(source["root"])
+        if not root.exists():
+            add_log("warning", f"Skipping missing source: {source['root']}")
+            continue
+
+        file_filter = is_model_file if source["type"] == "models" else (lambda _p: True)
+
+        if root.is_file():
+            s3_key = get_s3_key(str(root))
+            stat = root.stat()
+            source_trees.append({
+                "name": source["label"],
+                "path": f"__source__:{source['key_prefix']}",
+                "rel_path": source["label"],
+                "type": "dir",
+                "children": [{
+                    "name": root.name,
+                    "path": str(root),
+                    "rel_path": root.name,
+                    "type": "file",
+                    "size": stat.st_size,
+                    "size_human": format_size(stat.st_size),
+                    "s3_key": s3_key,
+                    "on_s3": s3_key in s3_keys,
+                }],
+                "file_count": 1,
+            })
+            continue
+
+        tree = build_files_tree(root, root, s3_keys, file_filter)
+        tree["name"] = source["label"]
+        tree["path"] = f"__source__:{source['key_prefix']}"
+        source_trees.append(tree)
+
+    if not source_trees:
+        raise FileNotFoundError(f"No configured source exists. Checked MODELS_ROOT={MODELS_ROOT}")
+
+    return {
+        "name": "Sources",
+        "path": "__virtual_root__",
+        "rel_path": ".",
+        "type": "dir",
+        "children": source_trees,
+        "file_count": sum(c.get("file_count", 0) for c in source_trees),
+    }
+
+
+def refresh_files_cache(force_s3_refresh: bool = False):
+    global scan_in_progress
+    with scan_lock:
+        with cache_lock:
+            scan_in_progress = True
+        try:
+            tree = scan_files_tree(force_s3_refresh=force_s3_refresh)
+            with cache_lock:
+                files_cache["cache_key"] = (
+                    MODELS_ROOT,
+                    S3_BUCKET,
+                    S3_PREFIX,
+                    INCLUDE_PERSONAL_STUFF,
+                    tuple(PERSONAL_PATHS),
+                )
+                files_cache["tree"] = tree
+                files_cache["scanned_at"] = datetime.datetime.now()
+        except Exception as e:
+            add_log("warning", f"Background scan failed: {e}")
+        finally:
+            with cache_lock:
+                scan_in_progress = False
+
+
+def trigger_background_refresh(force_s3_refresh: bool = False):
+    with cache_lock:
+        if scan_in_progress:
+            return
+    threading.Thread(target=refresh_files_cache, kwargs={"force_s3_refresh": force_s3_refresh}, daemon=True).start()
 
 
 # --- API ---
@@ -72,11 +381,18 @@ def index():
 
 @app.route("/api/config")
 def get_config():
-    return jsonify({"models_root": MODELS_ROOT, "s3_bucket": S3_BUCKET, "s3_prefix": S3_PREFIX})
+    return jsonify({
+        "models_root": MODELS_ROOT,
+        "s3_bucket": S3_BUCKET,
+        "s3_prefix": S3_PREFIX,
+        "aws_profile": AWS_PROFILE or "",
+        "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
+        "personal_paths": PERSONAL_PATHS,
+    })
 
 @app.route("/api/config", methods=["POST"])
 def update_config():
-    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, AWS_PROFILE
+    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, AWS_PROFILE, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS
     d = request.json
     if "models_root" in d:
         MODELS_ROOT = os.path.expanduser(d["models_root"])
@@ -86,52 +402,39 @@ def update_config():
         S3_PREFIX = d["s3_prefix"]
     if "aws_profile" in d:
         AWS_PROFILE = d["aws_profile"] or None
+    if "include_personal_stuff" in d:
+        INCLUDE_PERSONAL_STUFF = bool(d["include_personal_stuff"])
+    if "personal_paths" in d:
+        PERSONAL_PATHS = [os.path.expanduser(str(p).strip()) for p in d["personal_paths"] if str(p).strip()]
+    invalidate_scan_caches()
     return jsonify({"status": "ok"})
 
 @app.route("/api/files")
 def list_files():
-    root = Path(MODELS_ROOT)
-    if not root.exists():
-        return jsonify({"error": f"Directory not found: {MODELS_ROOT}"}), 404
+    cache_key = (MODELS_ROOT, S3_BUCKET, S3_PREFIX, INCLUDE_PERSONAL_STUFF, tuple(PERSONAL_PATHS))
+    now = datetime.datetime.now()
 
-    s3_keys = set()
-    if S3_BUCKET:
-        try:
-            s3 = get_s3_client()
-            paginator = s3.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=S3_PREFIX):
-                for obj in page.get("Contents", []):
-                    s3_keys.add(obj["Key"])
-        except Exception:
-            pass
+    with cache_lock:
+        cached_tree = files_cache["tree"]
+        cached_key = files_cache["cache_key"]
+        scanned_at = files_cache["scanned_at"]
+        is_scanning = scan_in_progress
 
-    def build_tree(path: Path, rel_root: Path):
-        node = {
-            "name": path.name,
-            "path": str(path),
-            "rel_path": str(path.relative_to(rel_root)),
-            "type": "dir" if path.is_dir() else "file",
-        }
-        if path.is_dir():
-            children = []
-            try:
-                for child in sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
-                    if child.is_dir() or is_model_file(child):
-                        children.append(build_tree(child, rel_root))
-            except PermissionError:
-                pass
-            node["children"] = children
-            node["file_count"] = sum(1 for c in children if c["type"] == "file")
-        else:
-            stat = path.stat()
-            s3_key = get_s3_key(str(path))
-            node["size"] = stat.st_size
-            node["size_human"] = format_size(stat.st_size)
-            node["s3_key"] = s3_key
-            node["on_s3"] = s3_key in s3_keys
-        return node
+    if cached_tree is not None and cached_key == cache_key:
+        if scanned_at and (now - scanned_at).total_seconds() >= FILES_CACHE_TTL_SECONDS and not is_scanning:
+            trigger_background_refresh(force_s3_refresh=False)
+        return jsonify(cached_tree)
 
-    return jsonify(build_tree(root, root))
+    try:
+        tree = scan_files_tree(force_s3_refresh=False)
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+
+    with cache_lock:
+        files_cache["cache_key"] = cache_key
+        files_cache["tree"] = tree
+        files_cache["scanned_at"] = now
+    return jsonify(tree)
 
 @app.route("/api/s3/list")
 def list_s3():
@@ -145,7 +448,7 @@ def list_s3():
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 rel = key[len(S3_PREFIX):]
-                local_path = os.path.join(MODELS_ROOT, rel)
+                local_path = local_path_from_s3_key(key)
                 files.append({
                     "s3_key": key,
                     "rel_path": rel,
@@ -201,6 +504,7 @@ def upload_files():
         errs = len(job["errors"])
         add_log("info", f"Upload done — {job['done_files'] - errs} succeeded, {errs} errors")
         job["finished"] = True
+        trigger_background_refresh(force_s3_refresh=True)
 
     threading.Thread(target=do_upload, daemon=True).start()
     return jsonify({"job_id": job_id})
@@ -236,8 +540,7 @@ def restore_files():
         s3 = get_s3_client()
         job = jobs[job_id]
         for key in keys:
-            rel = key[len(S3_PREFIX):]
-            local_path = os.path.join(MODELS_ROOT, rel)
+            local_path = local_path_from_s3_key(key)
             job["current"] = os.path.basename(local_path)
             try:
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -254,6 +557,7 @@ def restore_files():
         errs = len(job["errors"])
         add_log("info", f"Restore done — {job['done_files'] - errs} succeeded, {errs} errors")
         job["finished"] = True
+        trigger_background_refresh(force_s3_refresh=True)
 
     threading.Thread(target=do_restore, daemon=True).start()
     return jsonify({"job_id": job_id})
@@ -293,7 +597,8 @@ def delete_local():
             errors.append({"path": path, "error": str(e)})
             add_log("error", f"Failed to delete local {os.path.basename(path)}: {e}")
     add_log("info", f"Delete local — {len(deleted)} deleted, {len(errors)} errors")
-    return jsonify({"deleted": len(deleted), "errors": errors})
+    trigger_background_refresh(force_s3_refresh=False)
+    return jsonify({"deleted": len(deleted), "deleted_paths": deleted, "errors": errors})
 
 # --- Delete from S3 ---
 
@@ -315,6 +620,7 @@ def delete_s3():
             errors.append({"key": key, "error": str(e)})
             add_log("error", f"Failed to delete S3 {key.split('/')[-1]}: {e}")
     add_log("info", f"Delete S3 — {deleted} deleted, {len(errors)} errors")
+    trigger_background_refresh(force_s3_refresh=True)
     return jsonify({"deleted": deleted, "errors": errors})
 
 
@@ -331,7 +637,7 @@ def clear_logs():
 
 
 if __name__ == "__main__":
-    print(f"🚀 S3 Offloader → http://localhost:5050")
+    print(f"🚀 S3 Offloader → http://localhost:8888")
     print(f"📁 Models root : {MODELS_ROOT}")
     print(f"🪣 S3 bucket   : {S3_BUCKET or '(not set)'}")
-    app.run(host="0.0.0.0", port=5050, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=8888, debug=False, threaded=True)
