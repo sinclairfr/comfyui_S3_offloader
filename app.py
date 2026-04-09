@@ -3,6 +3,7 @@ S3 Model Offloader — Flask backend
 Scans local model directories, uploads to S3 with path metadata for 1-click restore.
 """
 
+import argparse
 import os
 import threading
 import datetime
@@ -12,7 +13,9 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
 
-load_dotenv()
+parser = argparse.ArgumentParser(description="S3 Model Offloader")
+parser.add_argument("--port", type=int, default=8888, help="Port to run the server on")
+args = parser.parse_args()
 
 app = Flask(__name__, static_folder="static")
 
@@ -535,7 +538,7 @@ def clear_logs():
 
 
 if __name__ == "__main__":
-    print(f"🚀 S3 Offloader → http://localhost:8888")
+    print(f"🚀 S3 Offloader → http://localhost:{args.port}")
     print(f"📁 Models root : {MODELS_ROOT}")
     print(f"🪣 S3 bucket   : {S3_BUCKET or '(not set)'}")
-    app.run(host="0.0.0.0", port=8888, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
