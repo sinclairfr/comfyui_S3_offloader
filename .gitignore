@@ -3,6 +3,7 @@
 settings.json
 __pycache__/
 *.pyc
+venv/
 
 # Logs
 *.log
