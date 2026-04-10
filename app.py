@@ -68,10 +68,16 @@ def _normalize_settings(raw: dict) -> dict:
     )
     merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
     merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
-    merged["aws_profile"] = merged.get("aws_profile") or None
-    merged["aws_access_key_id"] = merged.get("aws_access_key_id") or None
-    merged["aws_secret_access_key"] = merged.get("aws_secret_access_key") or None
-    merged["aws_session_token"] = merged.get("aws_session_token") or None
+    merged["aws_profile"] = str(merged.get("aws_profile") or "").strip() or None
+    merged["aws_access_key_id"] = (
+        str(merged.get("aws_access_key_id") or "").strip() or None
+    )
+    merged["aws_secret_access_key"] = (
+        str(merged.get("aws_secret_access_key") or "").strip() or None
+    )
+    merged["aws_session_token"] = (
+        str(merged.get("aws_session_token") or "").strip() or None
+    )
     merged["include_personal_stuff"] = bool(merged.get("include_personal_stuff", False))
     merged["personal_paths"] = [
         os.path.expanduser(str(p).strip())
@@ -199,16 +205,19 @@ def add_log(level: str, message: str):
 
 
 def get_s3_client():
-    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+    access_key = str(AWS_ACCESS_KEY_ID or "").strip()
+    secret_key = str(AWS_SECRET_ACCESS_KEY or "").strip()
+    session_token = str(AWS_SESSION_TOKEN or "").strip() or None
+    profile = str(AWS_PROFILE or "").strip() or None
+
+    if access_key and secret_key:
         session = boto3.Session(
-            aws_access_key_id=AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            aws_session_token=AWS_SESSION_TOKEN,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            aws_session_token=session_token,
         )
     else:
-        session = (
-            boto3.Session(profile_name=AWS_PROFILE) if AWS_PROFILE else boto3.Session()
-        )
+        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
     return session.client("s3")
 
 
@@ -529,13 +538,13 @@ def update_config():
     if "s3_prefix" in d:
         S3_PREFIX = d["s3_prefix"]
     if "aws_profile" in d:
-        AWS_PROFILE = d["aws_profile"] or None
+        AWS_PROFILE = str(d["aws_profile"] or "").strip() or None
     if "aws_access_key_id" in d:
-        AWS_ACCESS_KEY_ID = d["aws_access_key_id"] or None
+        AWS_ACCESS_KEY_ID = str(d["aws_access_key_id"] or "").strip() or None
     if "aws_secret_access_key" in d:
-        AWS_SECRET_ACCESS_KEY = d["aws_secret_access_key"] or None
+        AWS_SECRET_ACCESS_KEY = str(d["aws_secret_access_key"] or "").strip() or None
     if "aws_session_token" in d:
-        AWS_SESSION_TOKEN = d["aws_session_token"] or None
+        AWS_SESSION_TOKEN = str(d["aws_session_token"] or "").strip() or None
     if "include_personal_stuff" in d:
         INCLUDE_PERSONAL_STUFF = bool(d["include_personal_stuff"])
     if "personal_paths" in d:
