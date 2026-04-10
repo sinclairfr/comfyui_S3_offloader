@@ -73,7 +73,12 @@
   .config-field { display: flex; flex-direction: column; gap: 6px; }
   .config-field label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .6px; }
   .config-field input { background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: var(--mono); font-size: 12px; outline: none; transition: border-color .15s; }
+  .config-field textarea { background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: var(--mono); font-size: 12px; outline: none; transition: border-color .15s; resize: vertical; min-height: 110px; }
   .config-field input:focus { border-color: var(--accent); }
+  .config-field textarea:focus { border-color: var(--accent); }
+  .config-help { font-size: 11px; color: var(--text3); line-height: 1.6; }
+  .switch-row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .switch-row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
 
   /* Selection bar */
   .selection-bar { padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -266,6 +271,17 @@
           <label>AWS Profile (optional)</label>
           <input type="text" id="cfg-profile" placeholder="default" />
         </div>
+
+        <div class="config-field" style="grid-column:1/-1; margin-top:6px;">
+          <label>Personal folders backup (ComfyUI output/settings/custom)</label>
+          <div class="switch-row">
+            <input type="checkbox" id="cfg-include-personal" />
+            <span style="font-size:12px;color:var(--text2)">Enable backup for personal paths</span>
+          </div>
+          <div class="config-help">Add folders/files to keep in S3 (e.g. <code style="color:var(--accent)">/workspace/ComfyUI/output</code>, <code style="color:var(--accent)">/workspace/ComfyUI/user</code>).</div>
+          <textarea id="cfg-personal-paths-text" placeholder="/workspace/ComfyUI/output&#10;/workspace/ComfyUI/user&#10;/workspace/ComfyUI/custom_nodes"></textarea>
+          <div class="config-help">One path per line.</div>
+        </div>
       </div>
       <button class="btn btn-primary" onclick="saveConfig()">Save & Refresh</button>
       <p style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.9;">
@@ -343,10 +359,13 @@ async function loadConfig() {
   document.getElementById("cfg-bucket").value = config.s3_bucket;
   document.getElementById("cfg-prefix").value = config.s3_prefix;
   document.getElementById("cfg-profile").value = config.aws_profile || "";
+  document.getElementById("cfg-include-personal").checked = !!config.include_personal_stuff;
+  document.getElementById("cfg-personal-paths-text").value = (Array.isArray(config.personal_paths) ? config.personal_paths : []).join("\n");
   document.getElementById("bucket-display").textContent = config.s3_bucket ? `🪣 ${config.s3_bucket}` : "No bucket set";
 }
 
 async function saveConfig() {
+  const personalPaths = parsePersonalPathsText(document.getElementById("cfg-personal-paths-text").value);
   const r = await fetch("/api/config", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -354,6 +373,8 @@ async function saveConfig() {
       s3_bucket: document.getElementById("cfg-bucket").value,
       s3_prefix: document.getElementById("cfg-prefix").value,
       aws_profile: document.getElementById("cfg-profile").value,
+      include_personal_stuff: document.getElementById("cfg-include-personal").checked,
+      personal_paths: personalPaths,
     })
   });
   if (!r.ok) {
@@ -365,6 +386,22 @@ async function saveConfig() {
   refreshS3();
   notify("Config saved", "success");
   switchTab("local");
+}
+
+function parsePersonalPathsText(text) {
+  const seen = new Set();
+  const out = [];
+  String(text || "")
+    .split(/\r?\n/)
+    .map(v => v.trim())
+    .filter(Boolean)
+    .forEach(v => {
+      const k = v.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(v);
+    });
+  return out;
 }
 
 // --- Tabs ---
