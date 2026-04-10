@@ -1,4 +1,15 @@
 .env 
 .env.example
+settings.json
 __pycache__/
 *.pyc
+
+# Logs
+*.log
+*.out
+
+# Cache
+.cache/
+*.cache
+.pytest_cache/
+.mypy_cache/
