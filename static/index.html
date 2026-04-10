@@ -130,6 +130,9 @@
 
   .toolbar { display: flex; gap: 6px; align-items: center; }
   .badge { display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: white; border-radius: 10px; font-size: 10px; min-width: 18px; height: 18px; padding: 0 5px; font-weight: 700; }
+  .search-input { background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px; padding: 7px 10px; color: var(--text); font-family: var(--mono); font-size: 12px; min-width: 260px; outline: none; }
+  .search-input:focus { border-color: var(--accent); }
+  .view-toggle .btn.active { border-color: var(--accent); color: var(--accent); background: rgba(79,140,255,.08); }
 
   /* Logs */
   .log-list { display: flex; flex-direction: column; gap: 2px; }
@@ -173,6 +176,9 @@
           <button class="btn btn-secondary btn-sm" onclick="refreshTree()" title="Refresh">↻</button>
         </div>
       </div>
+      <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);">
+        <input id="local-search" class="search-input" style="width:100%;min-width:0" type="text" placeholder="Search local files..." />
+      </div>
       <div class="tree-container" id="tree-container">
         <div class="empty-state"><div class="icon">⏳</div><p>Loading...</p></div>
       </div>
@@ -198,6 +204,13 @@
     <div class="panel-content">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <div class="section-title">Files on S3</div>
+        <div class="toolbar" style="gap:10px;">
+          <input id="s3-search" class="search-input" type="text" placeholder="Search path, filename, key..." />
+          <div class="toolbar view-toggle">
+            <button class="btn btn-secondary btn-sm active" id="s3-view-tree-btn" onclick="setS3View('tree')">🌲 Tree</button>
+            <button class="btn btn-secondary btn-sm" id="s3-view-list-btn" onclick="setS3View('list')">☰ List</button>
+          </div>
+        </div>
         <div class="toolbar">
           <button class="btn btn-secondary btn-sm" onclick="selectAllS3()">Select All</button>
           <button class="btn btn-secondary btn-sm" onclick="selectNoneS3()">None</button>
@@ -292,12 +305,35 @@ let selectedS3Keys = new Set();
 let treeData = null;
 let s3Data = [];
 let config = {};
+let localSearchQuery = "";
+let s3SearchQuery = "";
+let s3ViewMode = "tree";
+const openS3Dirs = new Set();
 
 // --- Init ---
 async function init() {
+  setupLocalControls();
+  setupS3Controls();
   await loadConfig();
   refreshTree();
   refreshS3();
+}
+
+function setupLocalControls() {
+  const input = document.getElementById("local-search");
+  input.addEventListener("input", () => {
+    localSearchQuery = input.value.trim().toLowerCase();
+    renderTree();
+    updateLocalBar();
+  });
+}
+
+function setupS3Controls() {
+  const input = document.getElementById("s3-search");
+  input.addEventListener("input", () => {
+    s3SearchQuery = input.value.trim().toLowerCase();
+    renderS3List();
+  });
 }
 
 async function loadConfig() {
@@ -367,19 +403,50 @@ async function refreshTree() {
 function renderTree() {
   const c = document.getElementById("tree-container");
   c.innerHTML = "";
-  const files = collectAllFiles(treeData);
-  if (!treeData || files.length === 0) {
+  const visibleTree = getVisibleLocalTree();
+  const files = collectAllFiles(visibleTree);
+  if (!visibleTree || files.length === 0) {
+    if (localSearchQuery) {
+      c.innerHTML = `<div class="empty-state"><div class="icon">🔎</div><p>No local match for<br><code style="color:var(--accent)">${escapeHtml(localSearchQuery)}</code></p></div>`;
+      return;
+    }
     c.innerHTML = `<div class="empty-state"><div class="icon">🗂</div><p>No model files found in<br><code style="color:var(--accent)">${config.models_root}</code></p></div>`;
     return;
   }
-  if (treeData.type === "dir" && treeData.children) {
-    treeData.children.forEach(child => c.appendChild(buildNode(child, 0)));
+  if (visibleTree.type === "dir" && visibleTree.children) {
+    const forceOpen = !!localSearchQuery;
+    visibleTree.children.forEach(child => c.appendChild(buildNode(child, 0, forceOpen)));
   }
+}
+
+function getVisibleLocalTree() {
+  if (!treeData) return null;
+  if (!localSearchQuery) return treeData;
+  return filterLocalTree(treeData, localSearchQuery);
+}
+
+function filterLocalTree(node, query) {
+  if (!node) return null;
+  const q = query.toLowerCase();
+
+  if (node.type === "file") {
+    const haystack = `${node.name || ""} ${node.path || ""} ${node.rel_path || ""}`.toLowerCase();
+    return haystack.includes(q) ? { ...node } : null;
+  }
+
+  const children = (node.children || [])
+    .map(child => filterLocalTree(child, q))
+    .filter(Boolean);
+  const selfMatch = `${node.name || ""} ${node.path || ""} ${node.rel_path || ""}`.toLowerCase().includes(q);
+  if (!selfMatch && children.length === 0) return null;
+
+  const file_count = children.reduce((n, child) => n + (child.type === "file" ? 1 : (child.file_count || 0)), 0);
+  return { ...node, children, file_count };
 }
 
 const openDirs = new Set();
 
-function buildNode(node, depth) {
+function buildNode(node, depth, forceOpen = false) {
   const div = document.createElement("div");
   div.className = "tree-node";
   const item = document.createElement("div");
@@ -390,7 +457,7 @@ function buildNode(node, depth) {
   indent.style.cssText = `width:${depth * 16}px;display:inline-block;flex-shrink:0`;
 
   if (node.type === "dir") {
-    const isOpen = openDirs.has(node.path);
+    const isOpen = forceOpen || openDirs.has(node.path);
     const chev = document.createElement("span");
     chev.className = "chevron" + (isOpen ? " open" : "");
     chev.textContent = "▶";
@@ -407,7 +474,7 @@ function buildNode(node, depth) {
     item.append(indent, chev, icon, name, meta);
 
     const childContainer = document.createElement("div");
-    if (isOpen && node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1)));
+    if (isOpen && node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1, forceOpen)));
 
     item.addEventListener("click", e => {
       e.stopPropagation();
@@ -420,7 +487,7 @@ function buildNode(node, depth) {
         openDirs.add(node.path);
         chev.classList.add("open");
         icon.textContent = "📂";
-        if (node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1)));
+        if (node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1, forceOpen)));
       }
     });
     div.append(item, childContainer);
@@ -470,7 +537,7 @@ function collectAllFiles(node) {
 }
 
 function selectAll() {
-  collectAllFiles(treeData).forEach(f => selectedFiles.add(f.path));
+  collectAllFiles(getVisibleLocalTree()).forEach(f => selectedFiles.add(f.path));
   renderTree(); updateLocalBar();
 }
 function selectNone() {
@@ -511,12 +578,25 @@ async function refreshS3() {
 
 function renderS3List() {
   const c = document.getElementById("s3-list");
+  const visible = getVisibleS3Files();
+
   if (s3Data.length === 0) {
     c.innerHTML = `<div class="empty-state"><div class="icon">☁️</div><p>No files at <code style="color:var(--accent)">${config.s3_prefix}</code></p></div>`;
     return;
   }
+
+  if (visible.length === 0) {
+    c.innerHTML = `<div class="empty-state"><div class="icon">🔎</div><p>No match for <code style="color:var(--accent)">${escapeHtml(s3SearchQuery)}</code></p></div>`;
+    return;
+  }
+
+  if (s3ViewMode === "tree") {
+    renderS3Tree(visible, c);
+    return;
+  }
+
   c.innerHTML = "";
-  s3Data.forEach(f => {
+  visible.forEach(f => {
     const item = document.createElement("div");
     item.className = "s3-item" + (selectedS3Keys.has(f.s3_key) ? " selected" : "");
 
@@ -541,7 +621,7 @@ function renderS3List() {
 
     item.append(chk, icon, info, size, tag);
     item.addEventListener("click", () => {
-      selectedS3Keys.has(f.s3_key) ? selectedS3Keys.delete(f.s3_key) : selectedS3Keys.add(f.s3_key);
+      toggleS3Selection(f.s3_key);
       item.classList.toggle("selected", selectedS3Keys.has(f.s3_key));
       chk.classList.toggle("checked", selectedS3Keys.has(f.s3_key));
       updateS3Bar();
@@ -550,7 +630,173 @@ function renderS3List() {
   });
 }
 
-function selectAllS3() { s3Data.forEach(f => selectedS3Keys.add(f.s3_key)); renderS3List(); updateS3Bar(); }
+function getVisibleS3Files() {
+  if (!s3SearchQuery) return s3Data;
+  return s3Data.filter(f => {
+    const haystack = `${f.rel_path} ${f.s3_key} ${f.local_path}`.toLowerCase();
+    return haystack.includes(s3SearchQuery);
+  });
+}
+
+function setS3View(mode) {
+  s3ViewMode = mode === "list" ? "list" : "tree";
+  document.getElementById("s3-view-tree-btn").classList.toggle("active", s3ViewMode === "tree");
+  document.getElementById("s3-view-list-btn").classList.toggle("active", s3ViewMode === "list");
+  renderS3List();
+}
+
+function toggleS3Selection(key) {
+  selectedS3Keys.has(key) ? selectedS3Keys.delete(key) : selectedS3Keys.add(key);
+}
+
+function renderS3Tree(files, container) {
+  container.innerHTML = "";
+  const root = buildS3Tree(files);
+  const forceOpen = !!s3SearchQuery;
+  root.children.forEach(child => {
+    container.appendChild(buildS3TreeNode(child, 0, forceOpen));
+  });
+}
+
+function buildS3Tree(files) {
+  const root = { type: "dir", name: "", path: "", children: [], _map: new Map() };
+  for (const f of files) {
+    const parts = (f.rel_path || "").split("/").filter(Boolean);
+    let current = root;
+    let currPath = "";
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isFile = i === parts.length - 1;
+      if (isFile) {
+        current.children.push({ type: "file", name: part, path: `${currPath}/${part}`.replace(/^\//, ""), file: f });
+      } else {
+        currPath = `${currPath}/${part}`.replace(/^\//, "");
+        if (!current._map.has(currPath)) {
+          const dirNode = { type: "dir", name: part, path: currPath, children: [], _map: new Map(), file_count: 0 };
+          current._map.set(currPath, dirNode);
+          current.children.push(dirNode);
+        }
+        current = current._map.get(currPath);
+      }
+    }
+  }
+  finalizeS3Tree(root);
+  return root;
+}
+
+function finalizeS3Tree(node) {
+  if (node.type === "file") return 1;
+  node.children.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  let count = 0;
+  node.children.forEach(child => {
+    count += finalizeS3Tree(child);
+  });
+  node.file_count = count;
+  delete node._map;
+  return count;
+}
+
+function buildS3TreeNode(node, depth, forceOpen = false) {
+  const div = document.createElement("div");
+  div.className = "tree-node";
+
+  const item = document.createElement("div");
+  item.className = "tree-item";
+
+  const indent = document.createElement("span");
+  indent.className = "indent";
+  indent.style.cssText = `width:${depth * 16}px;display:inline-block;flex-shrink:0`;
+
+  if (node.type === "dir") {
+    const isOpen = forceOpen || openS3Dirs.has(node.path);
+    const chev = document.createElement("span");
+    chev.className = "chevron" + (isOpen ? " open" : "");
+    chev.textContent = "▶";
+
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.textContent = isOpen ? "📂" : "📁";
+
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = node.name;
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = node.file_count > 0 ? node.file_count : "";
+
+    item.append(indent, chev, icon, name, meta);
+
+    const children = document.createElement("div");
+    if (isOpen) node.children.forEach(child => children.appendChild(buildS3TreeNode(child, depth + 1, forceOpen)));
+
+    item.addEventListener("click", e => {
+      e.stopPropagation();
+      if (openS3Dirs.has(node.path)) {
+        openS3Dirs.delete(node.path);
+        chev.classList.remove("open");
+        icon.textContent = "📁";
+        children.innerHTML = "";
+      } else {
+        openS3Dirs.add(node.path);
+        chev.classList.add("open");
+        icon.textContent = "📂";
+        node.children.forEach(child => children.appendChild(buildS3TreeNode(child, depth + 1, forceOpen)));
+      }
+    });
+
+    div.append(item, children);
+    return div;
+  }
+
+  const f = node.file;
+  const chk = document.createElement("span");
+  chk.className = "checkbox" + (selectedS3Keys.has(f.s3_key) ? " checked" : "");
+
+  const icon = document.createElement("span");
+  icon.className = "icon";
+  icon.textContent = fileIcon(node.name);
+
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = node.name;
+  name.title = f.rel_path;
+
+  const size = document.createElement("span");
+  size.className = "meta";
+  size.textContent = f.size_human;
+
+  item.append(indent, chk, icon, name, size);
+
+  const tag = document.createElement("span");
+  tag.className = "local-tag " + (f.local_exists ? "exists" : "missing");
+  tag.textContent = f.local_exists ? "local" : "offloaded";
+  item.appendChild(tag);
+
+  item.addEventListener("click", e => {
+    e.stopPropagation();
+    toggleS3Selection(f.s3_key);
+    chk.classList.toggle("checked", selectedS3Keys.has(f.s3_key));
+    updateS3Bar();
+  });
+
+  div.appendChild(item);
+  return div;
+}
+
+function escapeHtml(str) {
+  return String(str || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function selectAllS3() { getVisibleS3Files().forEach(f => selectedS3Keys.add(f.s3_key)); renderS3List(); updateS3Bar(); }
 function selectNoneS3() { selectedS3Keys.clear(); renderS3List(); updateS3Bar(); }
 
 function updateS3Bar() {

@@ -210,6 +210,12 @@ def get_s3_client():
     session_token = str(AWS_SESSION_TOKEN or "").strip() or None
     profile = str(AWS_PROFILE or "").strip() or None
 
+    # Guard against empty profile env vars (e.g. AWS_PROFILE="") which
+    # botocore treats as an explicit (invalid) profile name.
+    for env_name in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE"):
+        if str(os.environ.get(env_name, "")).strip() == "":
+            os.environ.pop(env_name, None)
+
     if access_key and secret_key:
         session = boto3.Session(
             aws_access_key_id=access_key,
@@ -217,7 +223,10 @@ def get_s3_client():
             aws_session_token=session_token,
         )
     else:
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+        if profile:
+            session = boto3.Session(profile_name=profile)
+        else:
+            session = boto3.Session()
     return session.client("s3")
 
 
