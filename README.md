@@ -5,27 +5,51 @@ Web UI locale pour offloader tes modèles vers S3 et les restaurer en 1 clic.
 ## Setup
 
 ```bash
-cd s3_offloader
+cd comfyui_S3_offloader
 pip install -r requirements.txt
 
-cp .env.example .env
-# Edit .env: set MODELS_ROOT, S3_BUCKET
-
 python app.py
-# → http://localhost:5050
+# → http://localhost:8888
 ```
+
+## Configuration (JSON)
+
+Les settings runtime sont persistés dans [`settings.json`](settings.json).
+
+Fichier par défaut :
+
+```json
+{
+  "models_root": "~/models",
+  "s3_bucket": "",
+  "s3_prefix": "models-offload/",
+  "aws_profile": null,
+  "include_personal_stuff": false,
+  "personal_paths": [
+    "/workspace/ComfyUI/custom_nodes",
+    "/workspace/ComfyUI/user",
+    "/workspacecomfyui_S3_offloader",
+    "/workspace/medo_start.sh"
+  ]
+}
+```
+
+Tu peux aussi changer le chemin du fichier via la variable d'environnement `CONFIG_FILE`.
 
 ## Fonctionnement
 
 - **Local Files tab** : browse ton dossier de modèles, coche les fichiers, "Send to S3"
 - **On S3 tab** : liste tout ce qui est sur S3, coche, "Restore to Original Location" — aucune saisie requise
-- **Config tab** : change le root dir, bucket, prefix à la volée
+- **Config tab** : change `models_root`, `s3_bucket`, `s3_prefix`, `aws_profile`, `include_personal_stuff`, `personal_paths` à la volée (et sauvegarde dans [`settings.json`](settings.json))
 
 ## Comment la restauration sait où aller ?
 
-Le S3 key est construit comme `{prefix}{relative_path}` depuis `MODELS_ROOT`.  
-Exemple : `/home/mehdi/models/checkpoints/v1.safetensors` → S3 key : `models-offload/checkpoints/v1.safetensors`  
-À la restauration : `s3_key → strip prefix → rejoin MODELS_ROOT → recréer les dossiers → download`.
+Le S3 key est construit à partir de `s3_prefix` + un chemin relatif à la source :
+
+- modèles : `models/<relative_path>`
+- chemins perso : `personal/<slug>/<relative_path>`
+
+Exemple modèle : `/home/mehdi/models/checkpoints/v1.safetensors` → `models-offload/models/checkpoints/v1.safetensors`.
 
 Aucun fichier de metadata externe, tout est dans la structure du S3 key.
 
