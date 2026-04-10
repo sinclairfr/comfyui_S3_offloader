@@ -4,6 +4,7 @@ Scans local model directories, uploads to S3 with path metadata for 1-click rest
 """
 
 import argparse
+import json
 import os
 import threading
 import datetime
@@ -32,10 +33,61 @@ MODEL_EXTENSIONS = {
     ".q4_0",
     ".q8_0",
 }
-MODELS_ROOT = os.path.expanduser(os.getenv("MODELS_ROOT", "~/models"))
-S3_BUCKET = os.getenv("S3_BUCKET", "")
-S3_PREFIX = os.getenv("S3_PREFIX", "models-offload/")
-AWS_PROFILE = os.getenv("AWS_PROFILE", None)
+CONFIG_FILE = os.getenv("CONFIG_FILE", "settings.json")
+
+DEFAULT_CONFIG = {
+    "models_root": os.path.expanduser(os.getenv("MODELS_ROOT", "~/models")),
+    "s3_bucket": os.getenv("S3_BUCKET", ""),
+    "s3_prefix": os.getenv("S3_PREFIX", "models-offload/"),
+    "aws_profile": os.getenv("AWS_PROFILE", None),
+}
+
+
+def _normalize_config(raw: dict) -> dict:
+    """Merge incoming config with defaults and normalize values."""
+    merged = {**DEFAULT_CONFIG, **(raw or {})}
+    merged["models_root"] = os.path.expanduser(str(merged.get("models_root") or ""))
+    merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
+    merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
+    merged["aws_profile"] = merged.get("aws_profile") or None
+    return merged
+
+
+def load_runtime_config() -> dict:
+    """Load runtime config from JSON file, creating it with defaults if missing."""
+    cfg_path = Path(CONFIG_FILE)
+    if cfg_path.exists():
+        try:
+            with cfg_path.open("r", encoding="utf-8") as f:
+                return _normalize_config(json.load(f))
+        except Exception as e:
+            print(
+                f"⚠️ Failed to read {CONFIG_FILE} ({e}). Falling back to defaults.",
+                flush=True,
+            )
+            return _normalize_config({})
+
+    cfg = _normalize_config({})
+    try:
+        with cfg_path.open("w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to create {CONFIG_FILE} ({e}).", flush=True)
+    return cfg
+
+
+def save_runtime_config(cfg: dict):
+    """Persist runtime config to JSON file."""
+    cfg_path = Path(CONFIG_FILE)
+    with cfg_path.open("w", encoding="utf-8") as f:
+        json.dump(_normalize_config(cfg), f, indent=2)
+
+
+runtime_config = load_runtime_config()
+MODELS_ROOT = runtime_config["models_root"]
+S3_BUCKET = runtime_config["s3_bucket"]
+S3_PREFIX = runtime_config["s3_prefix"]
+AWS_PROFILE = runtime_config["aws_profile"]
 
 # In-memory progress store — keyed by job_id
 jobs = {}
@@ -234,7 +286,12 @@ def index():
 @app.route("/api/config")
 def get_config():
     return jsonify(
-        {"models_root": MODELS_ROOT, "s3_bucket": S3_BUCKET, "s3_prefix": S3_PREFIX}
+        {
+            "models_root": MODELS_ROOT,
+            "s3_bucket": S3_BUCKET,
+            "s3_prefix": S3_PREFIX,
+            "aws_profile": AWS_PROFILE,
+        }
     )
 
 
@@ -250,6 +307,16 @@ def update_config():
         S3_PREFIX = d["s3_prefix"]
     if "aws_profile" in d:
         AWS_PROFILE = d["aws_profile"] or None
+
+    save_runtime_config(
+        {
+            "models_root": MODELS_ROOT,
+            "s3_bucket": S3_BUCKET,
+            "s3_prefix": S3_PREFIX,
+            "aws_profile": AWS_PROFILE,
+        }
+    )
+
     invalidate_scan_caches()
     return jsonify({"status": "ok"})
 
@@ -539,6 +606,7 @@ def clear_logs():
 
 if __name__ == "__main__":
     print(f"🚀 S3 Offloader → http://localhost:{args.port}")
+    print(f"⚙️ Settings file: {CONFIG_FILE}")
     print(f"📁 Models root : {MODELS_ROOT}")
     print(f"🪣 S3 bucket   : {S3_BUCKET or '(not set)'}")
     app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)

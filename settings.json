@@ -1,0 +1,6 @@
+{
+  "models_root": "~/models",
+  "s3_bucket": "",
+  "s3_prefix": "models-offload/",
+  "aws_profile": null
+}
