@@ -3,6 +3,9 @@
   "s3_bucket": "",
   "s3_prefix": "models-offload/",
   "aws_profile": null,
+  "aws_access_key_id": null,
+  "aws_secret_access_key": null,
+  "aws_session_token": null,
   "include_personal_stuff": false,
   "personal_paths": [
     "/workspace/runpod-slim/ComfyUI/custom_nodes",
