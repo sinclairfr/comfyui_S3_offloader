@@ -9,8 +9,28 @@ cd comfyui_S3_offloader
 pip install -r requirements.txt
 
 python app.py
-# → http://localhost:8888
 ```
+
+## Lancement (port)
+
+Par défaut, le serveur Flask écoute sur le port **8888**.
+
+- URL locale (défaut): `http://localhost:8888`
+- URL réseau local (défaut): `http://<IP_DE_TA_MACHINE>:8888`
+
+Tu peux changer le port avec l'argument CLI `--port`.
+
+Exemples:
+
+```bash
+# Port par défaut
+python app.py
+
+# Port personnalisé
+python app.py --port 5050
+```
+
+Avec `--port 5050`, l'URL devient `http://localhost:5050`.
 
 ## Configuration (JSON)
 
@@ -35,6 +55,12 @@ Fichier par défaut :
 ```
 
 Tu peux aussi changer le chemin du fichier via la variable d'environnement `CONFIG_FILE`.
+
+Exemple:
+
+```bash
+CONFIG_FILE=/chemin/vers/mes-settings.json python app.py
+```
 
 ## Fonctionnement
 
