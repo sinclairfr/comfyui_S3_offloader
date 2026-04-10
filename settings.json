@@ -1,6 +1,10 @@
 {
-  "models_root": "~/models",
+  "models_root": "/workspace/runpod-slim/ComfyUI/models",
   "s3_bucket": "",
   "s3_prefix": "models-offload/",
-  "aws_profile": null
+  "aws_profile": null,
+  "include_personal_stuff": false,
+  "personal_paths": [
+    "/workspace/runpod-slim/ComfyUI/custom_nodes",
+  ]
 }

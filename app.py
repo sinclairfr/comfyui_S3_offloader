@@ -8,6 +8,7 @@ import threading
 import datetime
 import hashlib
 import re
+import json
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 import boto3
@@ -19,11 +20,74 @@ load_dotenv()
 app = Flask(__name__, static_folder="static")
 
 # --- Config ---
-MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".ggml", ".pkl", ".q4_0", ".q8_0"}
-MODELS_ROOT = os.path.expanduser(os.getenv("MODELS_ROOT", "~/models"))
-S3_BUCKET = os.getenv("S3_BUCKET", "")
-S3_PREFIX = os.getenv("S3_PREFIX", "models-offload/")
-AWS_PROFILE = os.getenv("AWS_PROFILE", None)
+MODEL_EXTENSIONS = {
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".gguf",
+    ".ggml",
+    ".pkl",
+    ".q4_0",
+    ".q8_0",
+}
+CONFIG_FILE = os.getenv("CONFIG_FILE", "settings.json")
+
+
+def _default_settings() -> dict:
+    return {
+        "models_root": os.getenv("MODELS_ROOT", "~/models"),
+        "s3_bucket": os.getenv("S3_BUCKET", ""),
+        "s3_prefix": os.getenv("S3_PREFIX", "models-offload/"),
+        "aws_profile": os.getenv("AWS_PROFILE", None),
+        "include_personal_stuff": env_bool("INCLUDE_PERSONAL_STUFF", False),
+        "personal_paths": parse_personal_paths(
+            os.getenv("PERSONAL_PATHS", ",".join(DEFAULT_PERSONAL_PATHS))
+        ),
+    }
+
+
+def _normalize_settings(raw: dict) -> dict:
+    merged = {**_default_settings(), **(raw or {})}
+    merged["models_root"] = os.path.expanduser(
+        str(merged.get("models_root") or "~/models")
+    )
+    merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
+    merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
+    merged["aws_profile"] = merged.get("aws_profile") or None
+    merged["include_personal_stuff"] = bool(merged.get("include_personal_stuff", False))
+    merged["personal_paths"] = [
+        os.path.expanduser(str(p).strip())
+        for p in (merged.get("personal_paths") or [])
+        if str(p).strip()
+    ]
+    return merged
+
+
+def load_settings() -> dict:
+    path = Path(CONFIG_FILE)
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                return _normalize_settings(json.load(f))
+        except Exception as e:
+            print(f"⚠️ Failed to read {CONFIG_FILE}: {e}. Using defaults.", flush=True)
+
+    settings = _normalize_settings({})
+    try:
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to write default {CONFIG_FILE}: {e}", flush=True)
+    return settings
+
+
+def save_settings(settings: dict):
+    path = Path(CONFIG_FILE)
+    normalized = _normalize_settings(settings)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(normalized, f, indent=2)
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -53,12 +117,16 @@ DEFAULT_PERSONAL_PATHS = [
     "/workspace/medo_start.sh",
 ]
 
-INCLUDE_PERSONAL_STUFF = env_bool("INCLUDE_PERSONAL_STUFF", False)
-PERSONAL_PATHS = parse_personal_paths(
-    os.getenv("PERSONAL_PATHS", ",".join(DEFAULT_PERSONAL_PATHS))
-)
+_SETTINGS = load_settings()
+MODELS_ROOT = _SETTINGS["models_root"]
+S3_BUCKET = _SETTINGS["s3_bucket"]
+S3_PREFIX = _SETTINGS["s3_prefix"]
+AWS_PROFILE = _SETTINGS["aws_profile"]
+INCLUDE_PERSONAL_STUFF = _SETTINGS["include_personal_stuff"]
+PERSONAL_PATHS = _SETTINGS["personal_paths"]
 SCAN_EXCLUDE_DIRS = set(
-    p.lower() for p in parse_csv(
+    p.lower()
+    for p in parse_csv(
         os.getenv(
             "SCAN_EXCLUDE_DIRS",
             ".git,__pycache__,.venv,venv,node_modules,.cache,.mypy_cache,.pytest_cache",
@@ -93,6 +161,7 @@ s3_keys_cache = {
     "fetched_at": None,
 }
 
+
 def add_log(level: str, message: str):
     """Append a log entry. level: info | success | error | warning"""
     entry = {
@@ -104,12 +173,18 @@ def add_log(level: str, message: str):
     if len(logs) > MAX_LOGS:
         logs.pop(0)
     # Also print to CLI
-    prefix = {"info": "ℹ️ ", "success": "✅", "error": "❌", "warning": "⚠️ "}.get(level, "  ")
+    prefix = {"info": "ℹ️ ", "success": "✅", "error": "❌", "warning": "⚠️ "}.get(
+        level, "  "
+    )
     print(f"[{entry['ts']}] {prefix} {message}", flush=True)
 
+
 def get_s3_client():
-    session = boto3.Session(profile_name=AWS_PROFILE) if AWS_PROFILE else boto3.Session()
+    session = (
+        boto3.Session(profile_name=AWS_PROFILE) if AWS_PROFILE else boto3.Session()
+    )
     return session.client("s3")
+
 
 def is_model_file(path: Path) -> bool:
     return path.suffix.lower() in MODEL_EXTENSIONS
@@ -124,21 +199,25 @@ def path_slug(path_str: str) -> str:
 
 
 def get_sources():
-    sources = [{
-        "type": "models",
-        "label": "Models",
-        "root": MODELS_ROOT,
-        "key_prefix": "models",
-    }]
+    sources = [
+        {
+            "type": "models",
+            "label": "Models",
+            "root": MODELS_ROOT,
+            "key_prefix": "models",
+        }
+    ]
     if INCLUDE_PERSONAL_STUFF:
         for raw in PERSONAL_PATHS:
             expanded = os.path.expanduser(raw)
-            sources.append({
-                "type": "personal",
-                "label": f"Personal · {Path(expanded).name or expanded}",
-                "root": expanded,
-                "key_prefix": f"personal/{path_slug(raw)}",
-            })
+            sources.append(
+                {
+                    "type": "personal",
+                    "label": f"Personal · {Path(expanded).name or expanded}",
+                    "root": expanded,
+                    "key_prefix": f"personal/{path_slug(raw)}",
+                }
+            )
     return sources
 
 
@@ -176,7 +255,7 @@ def get_s3_key(local_path: str) -> str:
 
 
 def local_path_from_s3_key(key: str) -> str:
-    rel = key[len(S3_PREFIX):] if key.startswith(S3_PREFIX) else key
+    rel = key[len(S3_PREFIX) :] if key.startswith(S3_PREFIX) else key
     parts = rel.split("/")
 
     # New format for model files: models/<rel_path>
@@ -200,6 +279,7 @@ def local_path_from_s3_key(key: str) -> str:
 
     # Backward compatibility (legacy keys at prefix root)
     return os.path.join(MODELS_ROOT, rel)
+
 
 def format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB"]:
@@ -269,13 +349,17 @@ def build_files_tree(path: Path, rel_root: Path, s3_keys: set, file_filter):
     if path.is_dir():
         children = []
         try:
-            for child in sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+            for child in sorted(
+                path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())
+            ):
                 if child.is_symlink():
                     continue
                 if child.is_dir() or file_filter(child):
                     if child.is_dir() and child.name.lower() in SCAN_EXCLUDE_DIRS:
                         continue
-                    children.append(build_files_tree(child, rel_root, s3_keys, file_filter))
+                    children.append(
+                        build_files_tree(child, rel_root, s3_keys, file_filter)
+                    )
         except (PermissionError, OSError):
             pass
         node["children"] = children
@@ -305,23 +389,27 @@ def scan_files_tree(force_s3_refresh: bool = False):
         if root.is_file():
             s3_key = get_s3_key(str(root))
             stat = root.stat()
-            source_trees.append({
-                "name": source["label"],
-                "path": f"__source__:{source['key_prefix']}",
-                "rel_path": source["label"],
-                "type": "dir",
-                "children": [{
-                    "name": root.name,
-                    "path": str(root),
-                    "rel_path": root.name,
-                    "type": "file",
-                    "size": stat.st_size,
-                    "size_human": format_size(stat.st_size),
-                    "s3_key": s3_key,
-                    "on_s3": s3_key in s3_keys,
-                }],
-                "file_count": 1,
-            })
+            source_trees.append(
+                {
+                    "name": source["label"],
+                    "path": f"__source__:{source['key_prefix']}",
+                    "rel_path": source["label"],
+                    "type": "dir",
+                    "children": [
+                        {
+                            "name": root.name,
+                            "path": str(root),
+                            "rel_path": root.name,
+                            "type": "file",
+                            "size": stat.st_size,
+                            "size_human": format_size(stat.st_size),
+                            "s3_key": s3_key,
+                            "on_s3": s3_key in s3_keys,
+                        }
+                    ],
+                    "file_count": 1,
+                }
+            )
             continue
 
         tree = build_files_tree(root, root, s3_keys, file_filter)
@@ -330,7 +418,9 @@ def scan_files_tree(force_s3_refresh: bool = False):
         source_trees.append(tree)
 
     if not source_trees:
-        raise FileNotFoundError(f"No configured source exists. Checked MODELS_ROOT={MODELS_ROOT}")
+        raise FileNotFoundError(
+            f"No configured source exists. Checked MODELS_ROOT={MODELS_ROOT}"
+        )
 
     return {
         "name": "Sources",
@@ -370,25 +460,34 @@ def trigger_background_refresh(force_s3_refresh: bool = False):
     with cache_lock:
         if scan_in_progress:
             return
-    threading.Thread(target=refresh_files_cache, kwargs={"force_s3_refresh": force_s3_refresh}, daemon=True).start()
+    threading.Thread(
+        target=refresh_files_cache,
+        kwargs={"force_s3_refresh": force_s3_refresh},
+        daemon=True,
+    ).start()
 
 
 # --- API ---
+
 
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
 
+
 @app.route("/api/config")
 def get_config():
-    return jsonify({
-        "models_root": MODELS_ROOT,
-        "s3_bucket": S3_BUCKET,
-        "s3_prefix": S3_PREFIX,
-        "aws_profile": AWS_PROFILE or "",
-        "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
-        "personal_paths": PERSONAL_PATHS,
-    })
+    return jsonify(
+        {
+            "models_root": MODELS_ROOT,
+            "s3_bucket": S3_BUCKET,
+            "s3_prefix": S3_PREFIX,
+            "aws_profile": AWS_PROFILE or "",
+            "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
+            "personal_paths": PERSONAL_PATHS,
+        }
+    )
+
 
 @app.route("/api/config", methods=["POST"])
 def update_config():
@@ -405,13 +504,34 @@ def update_config():
     if "include_personal_stuff" in d:
         INCLUDE_PERSONAL_STUFF = bool(d["include_personal_stuff"])
     if "personal_paths" in d:
-        PERSONAL_PATHS = [os.path.expanduser(str(p).strip()) for p in d["personal_paths"] if str(p).strip()]
+        PERSONAL_PATHS = [
+            os.path.expanduser(str(p).strip())
+            for p in d["personal_paths"]
+            if str(p).strip()
+        ]
+    save_settings(
+        {
+            "models_root": MODELS_ROOT,
+            "s3_bucket": S3_BUCKET,
+            "s3_prefix": S3_PREFIX,
+            "aws_profile": AWS_PROFILE,
+            "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
+            "personal_paths": PERSONAL_PATHS,
+        }
+    )
     invalidate_scan_caches()
     return jsonify({"status": "ok"})
 
+
 @app.route("/api/files")
 def list_files():
-    cache_key = (MODELS_ROOT, S3_BUCKET, S3_PREFIX, INCLUDE_PERSONAL_STUFF, tuple(PERSONAL_PATHS))
+    cache_key = (
+        MODELS_ROOT,
+        S3_BUCKET,
+        S3_PREFIX,
+        INCLUDE_PERSONAL_STUFF,
+        tuple(PERSONAL_PATHS),
+    )
     now = datetime.datetime.now()
 
     with cache_lock:
@@ -421,7 +541,11 @@ def list_files():
         is_scanning = scan_in_progress
 
     if cached_tree is not None and cached_key == cache_key:
-        if scanned_at and (now - scanned_at).total_seconds() >= FILES_CACHE_TTL_SECONDS and not is_scanning:
+        if (
+            scanned_at
+            and (now - scanned_at).total_seconds() >= FILES_CACHE_TTL_SECONDS
+            and not is_scanning
+        ):
             trigger_background_refresh(force_s3_refresh=False)
         return jsonify(cached_tree)
 
@@ -436,6 +560,7 @@ def list_files():
         files_cache["scanned_at"] = now
     return jsonify(tree)
 
+
 @app.route("/api/s3/list")
 def list_s3():
     if not S3_BUCKET:
@@ -447,24 +572,28 @@ def list_s3():
         for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=S3_PREFIX):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                rel = key[len(S3_PREFIX):]
+                rel = key[len(S3_PREFIX) :]
                 local_path = local_path_from_s3_key(key)
-                files.append({
-                    "s3_key": key,
-                    "rel_path": rel,
-                    "local_path": local_path,
-                    "size": obj["Size"],
-                    "size_human": format_size(obj["Size"]),
-                    "local_exists": os.path.exists(local_path),
-                    "last_modified": obj["LastModified"].isoformat(),
-                })
+                files.append(
+                    {
+                        "s3_key": key,
+                        "rel_path": rel,
+                        "local_path": local_path,
+                        "size": obj["Size"],
+                        "size_human": format_size(obj["Size"]),
+                        "local_exists": os.path.exists(local_path),
+                        "last_modified": obj["LastModified"].isoformat(),
+                    }
+                )
         return jsonify(files)
     except NoCredentialsError:
         return jsonify({"error": "AWS credentials not found"}), 401
     except ClientError as e:
         return jsonify({"error": str(e)}), 500
 
+
 # --- Upload ---
+
 
 @app.route("/api/upload", methods=["POST"])
 def upload_files():
@@ -476,9 +605,13 @@ def upload_files():
 
     total_bytes = sum(os.path.getsize(p) for p in paths if os.path.exists(p))
     jobs[job_id] = {
-        "total_files": len(paths), "done_files": 0,
-        "total_bytes": total_bytes, "transferred_bytes": 0,
-        "current": "", "errors": [], "finished": False,
+        "total_files": len(paths),
+        "done_files": 0,
+        "total_bytes": total_bytes,
+        "transferred_bytes": 0,
+        "current": "",
+        "errors": [],
+        "finished": False,
     }
 
     add_log("info", f"Upload started — {len(paths)} file(s)")
@@ -490,10 +623,14 @@ def upload_files():
             job["current"] = os.path.basename(path)
             try:
                 s3_key = get_s3_key(path)
+
                 # FIX: use make_callback to properly capture job ref in closure
                 def make_callback(j):
-                    def cb(n): j["transferred_bytes"] += n
+                    def cb(n):
+                        j["transferred_bytes"] += n
+
                     return cb
+
                 s3.upload_file(path, S3_BUCKET, s3_key, Callback=make_callback(job))
                 job["done_files"] += 1
                 add_log("success", f"Uploaded: {os.path.basename(path)}")
@@ -502,14 +639,18 @@ def upload_files():
                 job["done_files"] += 1
                 add_log("error", f"Upload failed {os.path.basename(path)}: {e}")
         errs = len(job["errors"])
-        add_log("info", f"Upload done — {job['done_files'] - errs} succeeded, {errs} errors")
+        add_log(
+            "info", f"Upload done — {job['done_files'] - errs} succeeded, {errs} errors"
+        )
         job["finished"] = True
         trigger_background_refresh(force_s3_refresh=True)
 
     threading.Thread(target=do_upload, daemon=True).start()
     return jsonify({"job_id": job_id})
 
+
 # --- Restore ---
+
 
 @app.route("/api/restore", methods=["POST"])
 def restore_files():
@@ -529,9 +670,13 @@ def restore_files():
             pass
 
     jobs[job_id] = {
-        "total_files": len(keys), "done_files": 0,
-        "total_bytes": total_bytes, "transferred_bytes": 0,
-        "current": "", "errors": [], "finished": False,
+        "total_files": len(keys),
+        "done_files": 0,
+        "total_bytes": total_bytes,
+        "transferred_bytes": 0,
+        "current": "",
+        "errors": [],
+        "finished": False,
     }
 
     add_log("info", f"Restore started — {len(keys)} file(s)")
@@ -544,10 +689,16 @@ def restore_files():
             job["current"] = os.path.basename(local_path)
             try:
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
                 def make_callback(j):
-                    def cb(n): j["transferred_bytes"] += n
+                    def cb(n):
+                        j["transferred_bytes"] += n
+
                     return cb
-                s3.download_file(S3_BUCKET, key, local_path, Callback=make_callback(job))
+
+                s3.download_file(
+                    S3_BUCKET, key, local_path, Callback=make_callback(job)
+                )
                 job["done_files"] += 1
                 add_log("success", f"Restored: {os.path.basename(local_path)}")
             except Exception as e:
@@ -555,32 +706,50 @@ def restore_files():
                 job["done_files"] += 1
                 add_log("error", f"Restore failed {os.path.basename(local_path)}: {e}")
         errs = len(job["errors"])
-        add_log("info", f"Restore done — {job['done_files'] - errs} succeeded, {errs} errors")
+        add_log(
+            "info",
+            f"Restore done — {job['done_files'] - errs} succeeded, {errs} errors",
+        )
         job["finished"] = True
         trigger_background_refresh(force_s3_refresh=True)
 
     threading.Thread(target=do_restore, daemon=True).start()
     return jsonify({"job_id": job_id})
 
+
 # --- Progress (unified endpoint) ---
+
 
 @app.route("/api/progress/<job_id>")
 def get_progress(job_id):
     job = jobs.get(job_id)
     if not job:
         return jsonify({"error": "Job not found"}), 404
-    pct = int(job["transferred_bytes"] / job["total_bytes"] * 100) if job["total_bytes"] > 0 \
-        else int(job["done_files"] / job["total_files"] * 100) if job["total_files"] > 0 else 0
-    return jsonify({
-        "pct": min(pct, 99) if not job["finished"] else 100,  # Don't show 100% until actually done
-        "done_files": job["done_files"],
-        "total_files": job["total_files"],
-        "current": job["current"],
-        "errors": job["errors"],
-        "finished": job["finished"],
-    })
+    pct = (
+        int(job["transferred_bytes"] / job["total_bytes"] * 100)
+        if job["total_bytes"] > 0
+        else (
+            int(job["done_files"] / job["total_files"] * 100)
+            if job["total_files"] > 0
+            else 0
+        )
+    )
+    return jsonify(
+        {
+            "pct": (
+                min(pct, 99) if not job["finished"] else 100
+            ),  # Don't show 100% until actually done
+            "done_files": job["done_files"],
+            "total_files": job["total_files"],
+            "current": job["current"],
+            "errors": job["errors"],
+            "finished": job["finished"],
+        }
+    )
+
 
 # --- Delete local files ---
+
 
 @app.route("/api/delete_local", methods=["POST"])
 def delete_local():
@@ -598,9 +767,13 @@ def delete_local():
             add_log("error", f"Failed to delete local {os.path.basename(path)}: {e}")
     add_log("info", f"Delete local — {len(deleted)} deleted, {len(errors)} errors")
     trigger_background_refresh(force_s3_refresh=False)
-    return jsonify({"deleted": len(deleted), "deleted_paths": deleted, "errors": errors})
+    return jsonify(
+        {"deleted": len(deleted), "deleted_paths": deleted, "errors": errors}
+    )
+
 
 # --- Delete from S3 ---
+
 
 @app.route("/api/delete_s3", methods=["POST"])
 def delete_s3():
@@ -626,9 +799,11 @@ def delete_s3():
 
 # --- Logs ---
 
+
 @app.route("/api/logs")
 def get_logs():
     return jsonify(list(reversed(logs)))  # most recent first
+
 
 @app.route("/api/logs", methods=["DELETE"])
 def clear_logs():
@@ -638,6 +813,7 @@ def clear_logs():
 
 if __name__ == "__main__":
     print(f"🚀 S3 Offloader → http://localhost:8888")
+    print(f"⚙️ Settings file: {CONFIG_FILE}")
     print(f"📁 Models root : {MODELS_ROOT}")
     print(f"🪣 S3 bucket   : {S3_BUCKET or '(not set)'}")
     app.run(host="0.0.0.0", port=8888, debug=False, threaded=True)
