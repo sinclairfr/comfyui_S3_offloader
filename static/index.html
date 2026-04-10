@@ -306,11 +306,12 @@ async function loadConfig() {
   document.getElementById("cfg-root").value = config.models_root;
   document.getElementById("cfg-bucket").value = config.s3_bucket;
   document.getElementById("cfg-prefix").value = config.s3_prefix;
+  document.getElementById("cfg-profile").value = config.aws_profile || "";
   document.getElementById("bucket-display").textContent = config.s3_bucket ? `🪣 ${config.s3_bucket}` : "No bucket set";
 }
 
 async function saveConfig() {
-  await fetch("/api/config", {
+  const r = await fetch("/api/config", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       models_root: document.getElementById("cfg-root").value,
@@ -319,6 +320,10 @@ async function saveConfig() {
       aws_profile: document.getElementById("cfg-profile").value,
     })
   });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ error: "Failed to save config" }));
+    throw new Error(e.error || "Failed to save config");
+  }
   await loadConfig();
   refreshTree();
   refreshS3();

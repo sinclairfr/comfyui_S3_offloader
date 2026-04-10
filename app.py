@@ -13,7 +13,12 @@ import argparse
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    NoCredentialsError,
+    ProfileNotFound,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -516,7 +521,7 @@ def get_config():
 @app.route("/api/config", methods=["POST"])
 def update_config():
     global MODELS_ROOT, S3_BUCKET, S3_PREFIX, AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS
-    d = request.json
+    d = request.json or {}
     if "models_root" in d:
         MODELS_ROOT = os.path.expanduser(d["models_root"])
     if "s3_bucket" in d:
@@ -539,19 +544,23 @@ def update_config():
             for p in d["personal_paths"]
             if str(p).strip()
         ]
-    save_settings(
-        {
-            "models_root": MODELS_ROOT,
-            "s3_bucket": S3_BUCKET,
-            "s3_prefix": S3_PREFIX,
-            "aws_profile": AWS_PROFILE,
-            "aws_access_key_id": AWS_ACCESS_KEY_ID,
-            "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
-            "aws_session_token": AWS_SESSION_TOKEN,
-            "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
-            "personal_paths": PERSONAL_PATHS,
-        }
-    )
+    try:
+        save_settings(
+            {
+                "models_root": MODELS_ROOT,
+                "s3_bucket": S3_BUCKET,
+                "s3_prefix": S3_PREFIX,
+                "aws_profile": AWS_PROFILE,
+                "aws_access_key_id": AWS_ACCESS_KEY_ID,
+                "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
+                "aws_session_token": AWS_SESSION_TOKEN,
+                "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
+                "personal_paths": PERSONAL_PATHS,
+            }
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to save settings: {e}"}), 500
+
     invalidate_scan_caches()
     return jsonify({"status": "ok"})
 
@@ -621,8 +630,14 @@ def list_s3():
         return jsonify(files)
     except NoCredentialsError:
         return jsonify({"error": "AWS credentials not found"}), 401
+    except ProfileNotFound as e:
+        return jsonify({"error": f"AWS profile error: {e}"}), 400
     except ClientError as e:
         return jsonify({"error": str(e)}), 500
+    except BotoCoreError as e:
+        return jsonify({"error": f"AWS SDK error: {e}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected server error: {e}"}), 500
 
 
 # --- Upload ---
