@@ -13,10 +13,10 @@ python app.py
 
 ## Lancement (port)
 
-Par défaut, le serveur Flask écoute sur le port **8888**.
+Par défaut, le serveur Flask écoute sur le port **8900**.
 
-- URL locale (défaut): `http://localhost:8888`
-- URL réseau local (défaut): `http://<IP_DE_TA_MACHINE>:8888`
+- URL locale (défaut): `http://localhost:8900`
+- URL réseau local (défaut): `http://<IP_DE_TA_MACHINE>:8900`
 
 Tu peux changer le port avec l'argument CLI `--port`.
 

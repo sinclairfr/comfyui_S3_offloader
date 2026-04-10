@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 parser = argparse.ArgumentParser(description="S3 Model Offloader")
-parser.add_argument("--port", type=int, default=8888, help="Port to run the server on")
+parser.add_argument("--port", type=int, default=8900, help="Port to run the server on")
 args = parser.parse_args()
 
 app = Flask(__name__, static_folder="static")
@@ -46,6 +46,9 @@ def _default_settings() -> dict:
         "s3_bucket": os.getenv("S3_BUCKET", ""),
         "s3_prefix": os.getenv("S3_PREFIX", "models-offload/"),
         "aws_profile": os.getenv("AWS_PROFILE", None),
+        "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID", None),
+        "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY", None),
+        "aws_session_token": os.getenv("AWS_SESSION_TOKEN", None),
         "include_personal_stuff": env_bool("INCLUDE_PERSONAL_STUFF", False),
         "personal_paths": parse_personal_paths(
             os.getenv("PERSONAL_PATHS", ",".join(DEFAULT_PERSONAL_PATHS))
@@ -61,6 +64,9 @@ def _normalize_settings(raw: dict) -> dict:
     merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
     merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
     merged["aws_profile"] = merged.get("aws_profile") or None
+    merged["aws_access_key_id"] = merged.get("aws_access_key_id") or None
+    merged["aws_secret_access_key"] = merged.get("aws_secret_access_key") or None
+    merged["aws_session_token"] = merged.get("aws_session_token") or None
     merged["include_personal_stuff"] = bool(merged.get("include_personal_stuff", False))
     merged["personal_paths"] = [
         os.path.expanduser(str(p).strip())
@@ -127,6 +133,9 @@ MODELS_ROOT = _SETTINGS["models_root"]
 S3_BUCKET = _SETTINGS["s3_bucket"]
 S3_PREFIX = _SETTINGS["s3_prefix"]
 AWS_PROFILE = _SETTINGS["aws_profile"]
+AWS_ACCESS_KEY_ID = _SETTINGS["aws_access_key_id"]
+AWS_SECRET_ACCESS_KEY = _SETTINGS["aws_secret_access_key"]
+AWS_SESSION_TOKEN = _SETTINGS["aws_session_token"]
 INCLUDE_PERSONAL_STUFF = _SETTINGS["include_personal_stuff"]
 PERSONAL_PATHS = _SETTINGS["personal_paths"]
 SCAN_EXCLUDE_DIRS = set(
@@ -185,9 +194,16 @@ def add_log(level: str, message: str):
 
 
 def get_s3_client():
-    session = (
-        boto3.Session(profile_name=AWS_PROFILE) if AWS_PROFILE else boto3.Session()
-    )
+    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+        session = boto3.Session(
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            aws_session_token=AWS_SESSION_TOKEN,
+        )
+    else:
+        session = (
+            boto3.Session(profile_name=AWS_PROFILE) if AWS_PROFILE else boto3.Session()
+        )
     return session.client("s3")
 
 
@@ -488,6 +504,9 @@ def get_config():
             "s3_bucket": S3_BUCKET,
             "s3_prefix": S3_PREFIX,
             "aws_profile": AWS_PROFILE or "",
+            "aws_access_key_id": AWS_ACCESS_KEY_ID or "",
+            "aws_secret_access_key": AWS_SECRET_ACCESS_KEY or "",
+            "aws_session_token": AWS_SESSION_TOKEN or "",
             "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
             "personal_paths": PERSONAL_PATHS,
         }
@@ -496,7 +515,7 @@ def get_config():
 
 @app.route("/api/config", methods=["POST"])
 def update_config():
-    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, AWS_PROFILE, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS
+    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS
     d = request.json
     if "models_root" in d:
         MODELS_ROOT = os.path.expanduser(d["models_root"])
@@ -506,6 +525,12 @@ def update_config():
         S3_PREFIX = d["s3_prefix"]
     if "aws_profile" in d:
         AWS_PROFILE = d["aws_profile"] or None
+    if "aws_access_key_id" in d:
+        AWS_ACCESS_KEY_ID = d["aws_access_key_id"] or None
+    if "aws_secret_access_key" in d:
+        AWS_SECRET_ACCESS_KEY = d["aws_secret_access_key"] or None
+    if "aws_session_token" in d:
+        AWS_SESSION_TOKEN = d["aws_session_token"] or None
     if "include_personal_stuff" in d:
         INCLUDE_PERSONAL_STUFF = bool(d["include_personal_stuff"])
     if "personal_paths" in d:
@@ -520,6 +545,9 @@ def update_config():
             "s3_bucket": S3_BUCKET,
             "s3_prefix": S3_PREFIX,
             "aws_profile": AWS_PROFILE,
+            "aws_access_key_id": AWS_ACCESS_KEY_ID,
+            "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
+            "aws_session_token": AWS_SESSION_TOKEN,
             "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
             "personal_paths": PERSONAL_PATHS,
         }
