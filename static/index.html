@@ -200,6 +200,7 @@
         <span class="sel-size" id="sel-size"></span>
         <button class="btn btn-red btn-sm" id="delete-local-btn" disabled onclick="confirmDeleteLocal()">🗑 Delete Local</button>
         <button class="btn btn-primary" id="upload-btn" disabled onclick="startUpload()">☁ Send to S3</button>
+        <button class="btn btn-red btn-sm" id="delete-folder-btn" disabled onclick="confirmDeleteFolder()" style="display:none">🗑 Delete Folder</button>
       </div>
     </div>
   </div>
@@ -231,6 +232,7 @@
       <span class="sel-size" id="s3-sel-size"></span>
       <button class="btn btn-red btn-sm" id="delete-s3-btn" disabled onclick="confirmDeleteS3()">🗑 Delete from S3</button>
       <button class="btn btn-green" id="restore-btn" disabled onclick="startRestore()">↓ Restore</button>
+      <button class="btn btn-red btn-sm" id="delete-s3-folder-btn" disabled onclick="confirmDeleteS3Folder()" style="display:none">🗑 Delete Folder</button>
     </div>
   </div>
 
@@ -317,7 +319,9 @@
 <script>
 // --- State ---
 let selectedFiles = new Set();
+let selectedFolder = null;
 let selectedS3Keys = new Set();
+let selectedS3Folder = null;
 let treeData = null;
 let s3Data = [];
 let config = {};
@@ -498,6 +502,10 @@ function buildNode(node, depth, forceOpen = false) {
     const chev = document.createElement("span");
     chev.className = "chevron" + (isOpen ? " open" : "");
     chev.textContent = "▶";
+
+    const chk = document.createElement("span");
+    chk.className = "checkbox" + (selectedFiles.has(node.path) ? " checked" : "");
+
     const icon = document.createElement("span");
     icon.className = "icon";
     icon.textContent = isOpen ? "📂" : "📁";
@@ -508,7 +516,7 @@ function buildNode(node, depth, forceOpen = false) {
     meta.className = "meta";
     meta.textContent = node.file_count > 0 ? node.file_count : "";
 
-    item.append(indent, chev, icon, name, meta);
+    item.append(indent, chev, chk, icon, name, meta);
 
     const childContainer = document.createElement("div");
     if (isOpen && node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1, forceOpen)));
@@ -526,6 +534,11 @@ function buildNode(node, depth, forceOpen = false) {
         icon.textContent = "📂";
         if (node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1, forceOpen)));
       }
+    });
+
+    chk.addEventListener("click", e => {
+      e.stopPropagation();
+      toggleFolderSelection(node);
     });
     div.append(item, childContainer);
   } else {
@@ -575,10 +588,45 @@ function collectAllFiles(node) {
 
 function selectAll() {
   collectAllFiles(getVisibleLocalTree()).forEach(f => selectedFiles.add(f.path));
+  selectedFolder = null;
   renderTree(); updateLocalBar();
 }
 function selectNone() {
-  selectedFiles.clear(); renderTree(); updateLocalBar();
+  selectedFiles.clear();
+  selectedFolder = null;
+  renderTree(); updateLocalBar();
+}
+
+function toggleFolderSelection(node) {
+  const files = collectAllFiles(node);
+  const allSelected = files.every(f => selectedFiles.has(f.path));
+  if (allSelected) {
+    files.forEach(f => selectedFiles.delete(f.path));
+    selectedFolder = null;
+  } else {
+    files.forEach(f => selectedFiles.add(f.path));
+    selectedFolder = { path: node.path, name: node.name, files: files };
+  }
+  renderTree();
+  updateLocalBar();
+}
+
+function confirmDeleteFolder() {
+  if (!selectedFolder) return;
+  const path = selectedFolder.path;
+  if (!confirm(`Delete entire folder "${selectedFolder.name}" and all its contents? This cannot be undone.`)) return;
+  fetch("/api/delete_local", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths: [path] })
+  }).then(r => r.json()).then(data => {
+    if (data.errors && data.errors.length) {
+      notify(`Error: ${data.errors.map(e=>e.error).join(", ")}`, "error");
+    } else {
+      notify(`Deleted folder "${selectedFolder.name}"`, "success");
+    }
+    selectedFolder = null;
+    refreshTree();
+  }).catch(e => notify("Network error: " + e.message, "error"));
 }
 
 function updateLocalBar() {
@@ -589,6 +637,16 @@ function updateLocalBar() {
   document.getElementById("sel-size").textContent = totalSize > 0 ? fmtSize(totalSize) : "";
   document.getElementById("upload-btn").disabled = count === 0;
   document.getElementById("delete-local-btn").disabled = count === 0;
+
+  // Show delete folder button if a folder is fully selected
+  const folderBtn = document.getElementById("delete-folder-btn");
+  if (selectedFolder && selectedFolder.files.every(f => selectedFiles.has(f.path))) {
+    folderBtn.style.display = "inline-flex";
+    folderBtn.disabled = false;
+  } else {
+    folderBtn.style.display = "none";
+    folderBtn.disabled = true;
+  }
 }
 
 // --- S3 List ---
@@ -753,6 +811,9 @@ function buildS3TreeNode(node, depth, forceOpen = false) {
     chev.className = "chevron" + (isOpen ? " open" : "");
     chev.textContent = "▶";
 
+    const chk = document.createElement("span");
+    chk.className = "checkbox" + (selectedS3Folder && getS3FolderFiles(node).every(f => selectedS3Keys.has(f.s3_key)) ? " checked" : "");
+
     const icon = document.createElement("span");
     icon.className = "icon";
     icon.textContent = isOpen ? "📂" : "📁";
@@ -765,7 +826,7 @@ function buildS3TreeNode(node, depth, forceOpen = false) {
     meta.className = "meta";
     meta.textContent = node.file_count > 0 ? node.file_count : "";
 
-    item.append(indent, chev, icon, name, meta);
+    item.append(indent, chev, chk, icon, name, meta);
 
     const children = document.createElement("div");
     if (isOpen) node.children.forEach(child => children.appendChild(buildS3TreeNode(child, depth + 1, forceOpen)));
@@ -783,6 +844,12 @@ function buildS3TreeNode(node, depth, forceOpen = false) {
         icon.textContent = "📂";
         node.children.forEach(child => children.appendChild(buildS3TreeNode(child, depth + 1, forceOpen)));
       }
+    });
+
+    chk.addEventListener("click", e => {
+      e.stopPropagation();
+      const folderFiles = getS3FolderFiles(node);
+      toggleS3FolderSelection(node, folderFiles);
     });
 
     div.append(item, children);
@@ -833,8 +900,8 @@ function escapeHtml(str) {
     .replaceAll("'", "&#39;");
 }
 
-function selectAllS3() { getVisibleS3Files().forEach(f => selectedS3Keys.add(f.s3_key)); renderS3List(); updateS3Bar(); }
-function selectNoneS3() { selectedS3Keys.clear(); renderS3List(); updateS3Bar(); }
+function selectAllS3() { getVisibleS3Files().forEach(f => selectedS3Keys.add(f.s3_key)); selectedS3Folder = null; renderS3List(); updateS3Bar(); }
+function selectNoneS3() { selectedS3Keys.clear(); selectedS3Folder = null; renderS3List(); updateS3Bar(); }
 
 function updateS3Bar() {
   const count = selectedS3Keys.size;
@@ -843,6 +910,26 @@ function updateS3Bar() {
   document.getElementById("s3-sel-size").textContent = total > 0 ? fmtSize(total) : "";
   document.getElementById("restore-btn").disabled = count === 0;
   document.getElementById("delete-s3-btn").disabled = count === 0;
+
+  // Show delete folder button if a folder is fully selected
+  const folderBtn = document.getElementById("delete-s3-folder-btn");
+  if (selectedS3Folder && selectedS3Folder.keys.every(k => selectedS3Keys.has(k))) {
+    folderBtn.style.display = "inline-flex";
+    folderBtn.disabled = false;
+  } else {
+    folderBtn.style.display = "none";
+    folderBtn.disabled = true;
+  }
+}
+
+function getS3FolderFiles(node) {
+  const files = [];
+  function collect(n) {
+    if (n.type === "file") files.push(n.file);
+    else if (n.children) n.children.forEach(collect);
+  }
+  if (node.children) node.children.forEach(collect);
+  return files;
 }
 
 // --- Upload ---
@@ -878,6 +965,7 @@ async function confirmDeleteLocal() {
   const paths = Array.from(selectedFiles);
   if (paths.length === 0) return;
   selectedFiles.clear();
+  selectedFolder = null;
   updateLocalBar();
   try {
     const r = await fetch("/api/delete_local", {
@@ -894,6 +982,40 @@ async function confirmDeleteLocal() {
     notify("Erreur réseau: " + e.message, "error");
   }
   refreshTree();
+}
+
+function toggleS3FolderSelection(node, files) {
+  const allSelected = files.every(f => selectedS3Keys.has(f.s3_key));
+  if (allSelected) {
+    files.forEach(f => selectedS3Keys.delete(f.s3_key));
+    selectedS3Folder = null;
+  } else {
+    files.forEach(f => selectedS3Keys.add(f.s3_key));
+    selectedS3Folder = { keys: files.map(f => f.s3_key), name: node.name };
+  }
+  renderS3List();
+  updateS3Bar();
+}
+
+function confirmDeleteS3Folder() {
+  if (!selectedS3Folder) return;
+  const prefix = selectedS3Folder.keys[0].replace(S3_PREFIX, "").split("/");
+  const folderPrefix = prefix.slice(0, -1).join("/") + "/";
+  if (!confirm(`Delete entire folder "${selectedS3Folder.name}" and all its contents from S3? This cannot be undone.`)) return;
+  selectedS3Keys.clear();
+  selectedS3Folder = null;
+  updateS3Bar();
+  fetch("/api/delete_s3_folder", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prefix: folderPrefix })
+  }).then(r => r.json()).then(data => {
+    if (data.errors && data.errors.length) {
+      notify(`Deleted ${data.deleted}, ${data.errors.length} error(s): ${data.errors.map(e=>e.error).join(", ")}`, "error");
+    } else {
+      notify(`Deleted ${data.deleted} file(s) from S3`, "success");
+    }
+    refreshS3();
+  }).catch(e => notify("Network error: " + e.message, "error"));
 }
 
 // --- Delete S3 ---

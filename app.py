@@ -819,19 +819,33 @@ def get_progress(job_id):
 
 @app.route("/api/delete_local", methods=["POST"])
 def delete_local():
-    """Hard-delete local files. Only call this after confirming S3 upload succeeded."""
+    """Hard-delete local files and/or folders. Only call this after confirming S3 upload succeeded."""
     paths = request.json.get("paths", [])
     print(f"[delete_local] received {len(paths)} path(s): {paths}", flush=True)
     deleted, errors = [], []
+
+    def delete_path(path):
+        if os.path.isdir(path):
+            import shutil
+            shutil.rmtree(path)
+            return True
+        else:
+            os.remove(path)
+            return True
+
     for path in paths:
         try:
-            os.remove(path)
+            delete_path(path)
             deleted.append(path)
             add_log("success", f"Deleted local: {os.path.basename(path)}")
         except Exception as e:
             errors.append({"path": path, "error": str(e)})
             add_log("error", f"Failed to delete local {os.path.basename(path)}: {e}")
     add_log("info", f"Delete local — {len(deleted)} deleted, {len(errors)} errors")
+    with cache_lock:
+        files_cache["cache_key"] = None
+        files_cache["tree"] = None
+        files_cache["scanned_at"] = None
     trigger_background_refresh(force_s3_refresh=False)
     return jsonify(
         {"deleted": len(deleted), "deleted_paths": deleted, "errors": errors}
@@ -859,6 +873,43 @@ def delete_s3():
             errors.append({"key": key, "error": str(e)})
             add_log("error", f"Failed to delete S3 {key.split('/')[-1]}: {e}")
     add_log("info", f"Delete S3 — {deleted} deleted, {len(errors)} errors")
+    trigger_background_refresh(force_s3_refresh=True)
+    return jsonify({"deleted": deleted, "errors": errors})
+
+
+@app.route("/api/delete_s3_folder", methods=["POST"])
+def delete_s3_folder():
+    """Delete a folder (all objects with a given prefix) from S3 bucket."""
+    prefix = request.json.get("prefix", "")
+    if not prefix:
+        return jsonify({"error": "No prefix provided"}), 400
+    if not S3_BUCKET:
+        return jsonify({"error": "No S3 bucket configured"}), 400
+
+    full_prefix = S3_PREFIX + prefix if not prefix.startswith(S3_PREFIX) else prefix
+    print(f"[delete_s3_folder] deleting all objects with prefix: {full_prefix}", flush=True)
+
+    s3 = get_s3_client()
+    deleted, errors = 0, []
+
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=full_prefix):
+            objects = page.get("Contents", [])
+            if objects:
+                delete_keys = [{"Key": obj["Key"]} for obj in objects]
+                s3.delete_objects(
+                    Bucket=S3_BUCKET,
+                    Delete={"Objects": delete_keys, "Quiet": True}
+                )
+                deleted += len(delete_keys)
+                for obj in objects:
+                    add_log("success", f"Deleted from S3: {obj['Key'].split('/')[-1]}")
+    except Exception as e:
+        errors.append({"prefix": full_prefix, "error": str(e)})
+        add_log("error", f"Failed to delete S3 folder {prefix}: {e}")
+
+    add_log("info", f"Delete S3 folder — {deleted} deleted, {len(errors)} errors")
     trigger_background_refresh(force_s3_refresh=True)
     return jsonify({"deleted": deleted, "errors": errors})
 
