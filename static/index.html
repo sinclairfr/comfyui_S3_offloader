@@ -183,6 +183,10 @@
       <div class="sidebar-header">
         <span>Model Files</span>
         <div class="toolbar">
+          <div class="toolbar view-toggle">
+            <button class="btn btn-secondary btn-sm active" id="local-view-tree-btn" onclick="setLocalView('tree')" title="Tree view">🌲</button>
+            <button class="btn btn-secondary btn-sm" id="local-view-list-btn" onclick="setLocalView('list')" title="List view">☰</button>
+          </div>
           <button class="btn btn-secondary btn-sm" onclick="selectAll()">All</button>
           <button class="btn btn-secondary btn-sm" onclick="selectNone()">None</button>
           <button class="btn btn-secondary btn-sm" onclick="refreshTree()" title="Refresh">↻</button>
@@ -352,6 +356,7 @@ let localSortBy = "name";
 let localSortDir = "asc";
 let s3SortBy = "name";
 let s3SortDir = "asc";
+let localViewMode = "tree";
 
 // --- Init ---
 async function init() {
@@ -527,11 +532,61 @@ function updateS3SortUI() {
   });
 }
 
+function setLocalView(mode) {
+  localViewMode = mode;
+  document.getElementById("local-view-tree-btn").classList.toggle("active", mode === "tree");
+  document.getElementById("local-view-list-btn").classList.toggle("active", mode === "list");
+  renderTree();
+}
+
+function renderLocalList(files, container) {
+  const d = localSortDir === "asc" ? 1 : -1;
+  const sorted = [...files].sort((a, b) => {
+    if (localSortBy === "size") return d * ((a.size || 0) - (b.size || 0));
+    if (localSortBy === "type") {
+      const extA = (a.name.split(".").pop() || "").toLowerCase();
+      const extB = (b.name.split(".").pop() || "").toLowerCase();
+      const cmp = extA.localeCompare(extB);
+      return cmp !== 0 ? d * cmp : a.name.localeCompare(b.name);
+    }
+    return d * a.name.localeCompare(b.name);
+  });
+  sorted.forEach(f => {
+    const item = document.createElement("div");
+    item.className = "tree-item" + (selectedFiles.has(f.path) ? " selected" : "");
+    const chk = document.createElement("span");
+    chk.className = "checkbox" + (selectedFiles.has(f.path) ? " checked" : "");
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.textContent = fileIcon(f.name);
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = f.name;
+    nameEl.title = f.path;
+    const size = document.createElement("span");
+    size.className = "meta";
+    size.textContent = f.size_human;
+    item.append(chk, icon, nameEl, size);
+    if (f.on_s3) {
+      const badge = document.createElement("span");
+      badge.className = "s3-badge";
+      badge.textContent = "S3";
+      item.appendChild(badge);
+    }
+    item.addEventListener("click", () => {
+      selectedFiles.has(f.path) ? selectedFiles.delete(f.path) : selectedFiles.add(f.path);
+      chk.classList.toggle("checked", selectedFiles.has(f.path));
+      item.classList.toggle("selected", selectedFiles.has(f.path));
+      updateLocalBar();
+    });
+    container.appendChild(item);
+  });
+}
+
 function renderTree() {
   const c = document.getElementById("tree-container");
   c.innerHTML = "";
   const visibleTree = getVisibleLocalTree();
-  if (visibleTree) sortTreeNode(visibleTree, localSortBy, localSortDir);
   const files = collectAllFiles(visibleTree);
   if (!visibleTree || files.length === 0) {
     if (localSearchQuery) {
@@ -541,6 +596,11 @@ function renderTree() {
     c.innerHTML = `<div class="empty-state"><div class="icon">🗂</div><p>No model files found in<br><code style="color:var(--accent)">${config.models_root}</code></p></div>`;
     return;
   }
+  if (localViewMode === "list") {
+    renderLocalList(files, c);
+    return;
+  }
+  sortTreeNode(visibleTree, localSortBy, localSortDir);
   if (visibleTree.type === "dir" && visibleTree.children) {
     const forceOpen = !!localSearchQuery;
     visibleTree.children.forEach(child => c.appendChild(buildNode(child, 0, forceOpen)));
