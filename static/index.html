@@ -149,6 +149,13 @@
   .log-level.error { color: var(--red); }
   .log-level.warning { color: var(--orange); }
   .log-msg { flex: 1; word-break: break-all; }
+
+  /* Sort bar */
+  .sort-bar { display: flex; align-items: center; gap: 4px; padding: 5px 12px 6px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .sort-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; margin-right: 2px; flex-shrink: 0; }
+  .sort-btn { padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border2); background: transparent; color: var(--text3); font-family: var(--mono); font-size: 10px; cursor: pointer; transition: all .1s; white-space: nowrap; }
+  .sort-btn:hover { color: var(--text); border-color: var(--text3); }
+  .sort-btn.active { background: rgba(79,140,255,.1); border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -184,6 +191,12 @@
       <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);">
         <input id="local-search" class="search-input" style="width:100%;min-width:0" type="text" placeholder="Search local files..." />
       </div>
+      <div class="sort-bar">
+        <span class="sort-label">Sort:</span>
+        <button class="sort-btn active" id="local-sort-name" onclick="setLocalSort('name')">Name ↑</button>
+        <button class="sort-btn" id="local-sort-size" onclick="setLocalSort('size')">Size</button>
+        <button class="sort-btn" id="local-sort-type" onclick="setLocalSort('type')">Type</button>
+      </div>
       <div class="tree-container" id="tree-container">
         <div class="empty-state"><div class="icon">⏳</div><p>Loading...</p></div>
       </div>
@@ -215,6 +228,12 @@
           <div class="toolbar view-toggle">
             <button class="btn btn-secondary btn-sm active" id="s3-view-tree-btn" onclick="setS3View('tree')">🌲 Tree</button>
             <button class="btn btn-secondary btn-sm" id="s3-view-list-btn" onclick="setS3View('list')">☰ List</button>
+          </div>
+          <div class="toolbar" style="gap:4px;align-items:center;">
+            <span class="sort-label" style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">Sort:</span>
+            <button class="sort-btn active" id="s3-sort-name" onclick="setS3Sort('name')">Name ↑</button>
+            <button class="sort-btn" id="s3-sort-size" onclick="setS3Sort('size')">Size</button>
+            <button class="sort-btn" id="s3-sort-date" onclick="setS3Sort('date')">Date</button>
           </div>
         </div>
         <div class="toolbar">
@@ -329,6 +348,10 @@ let localSearchQuery = "";
 let s3SearchQuery = "";
 let s3ViewMode = "tree";
 const openS3Dirs = new Set();
+let localSortBy = "name";
+let localSortDir = "asc";
+let s3SortBy = "name";
+let s3SortDir = "asc";
 
 // --- Init ---
 async function init() {
@@ -441,10 +464,74 @@ async function refreshTree() {
   }
 }
 
+function sortTreeNode(node, by, dir) {
+  if (!node || node.type === "file") return;
+  const d = dir === "asc" ? 1 : -1;
+  node.children.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    if (by === "size") {
+      if (a.type === "dir") return d * a.name.localeCompare(b.name);
+      return d * ((a.size || 0) - (b.size || 0));
+    }
+    if (by === "type") {
+      if (a.type === "dir") return d * a.name.localeCompare(b.name);
+      const extA = (a.name.split(".").pop() || "").toLowerCase();
+      const extB = (b.name.split(".").pop() || "").toLowerCase();
+      const cmp = extA.localeCompare(extB);
+      return cmp !== 0 ? d * cmp : a.name.localeCompare(b.name);
+    }
+    return d * a.name.localeCompare(b.name);
+  });
+  node.children.forEach(c => sortTreeNode(c, by, dir));
+}
+
+function setLocalSort(by) {
+  if (localSortBy === by) {
+    localSortDir = localSortDir === "asc" ? "desc" : "asc";
+  } else {
+    localSortBy = by;
+    localSortDir = "asc";
+  }
+  updateLocalSortUI();
+  renderTree();
+}
+
+function updateLocalSortUI() {
+  ["name", "size", "type"].forEach(key => {
+    const btn = document.getElementById(`local-sort-${key}`);
+    if (!btn) return;
+    btn.classList.toggle("active", localSortBy === key);
+    const labels = { name: "Name", size: "Size", type: "Type" };
+    btn.textContent = localSortBy === key ? `${labels[key]} ${localSortDir === "asc" ? "↑" : "↓"}` : labels[key];
+  });
+}
+
+function setS3Sort(by) {
+  if (s3SortBy === by) {
+    s3SortDir = s3SortDir === "asc" ? "desc" : "asc";
+  } else {
+    s3SortBy = by;
+    s3SortDir = "asc";
+  }
+  updateS3SortUI();
+  renderS3List();
+}
+
+function updateS3SortUI() {
+  ["name", "size", "date"].forEach(key => {
+    const btn = document.getElementById(`s3-sort-${key}`);
+    if (!btn) return;
+    btn.classList.toggle("active", s3SortBy === key);
+    const labels = { name: "Name", size: "Size", date: "Date" };
+    btn.textContent = s3SortBy === key ? `${labels[key]} ${s3SortDir === "asc" ? "↑" : "↓"}` : labels[key];
+  });
+}
+
 function renderTree() {
   const c = document.getElementById("tree-container");
   c.innerHTML = "";
   const visibleTree = getVisibleLocalTree();
+  if (visibleTree) sortTreeNode(visibleTree, localSortBy, localSortDir);
   const files = collectAllFiles(visibleTree);
   if (!visibleTree || files.length === 0) {
     if (localSearchQuery) {
@@ -690,8 +777,15 @@ function renderS3List() {
     return;
   }
 
+  const sorted = [...visible].sort((a, b) => {
+    const d = s3SortDir === "asc" ? 1 : -1;
+    if (s3SortBy === "size") return d * ((a.size || 0) - (b.size || 0));
+    if (s3SortBy === "date") return d * (new Date(a.last_modified).getTime() - new Date(b.last_modified).getTime());
+    return d * (a.rel_path || "").localeCompare(b.rel_path || "");
+  });
+
   c.innerHTML = "";
-  visible.forEach(f => {
+  sorted.forEach(f => {
     const item = document.createElement("div");
     item.className = "s3-item" + (selectedS3Keys.has(f.s3_key) ? " selected" : "");
 
@@ -781,9 +875,20 @@ function buildS3Tree(files) {
 
 function finalizeS3Tree(node) {
   if (node.type === "file") return 1;
+  const d = s3SortDir === "asc" ? 1 : -1;
   node.children.sort((a, b) => {
     if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
-    return a.name.localeCompare(b.name);
+    if (s3SortBy === "size") {
+      if (a.type === "dir") return d * a.name.localeCompare(b.name);
+      return d * ((a.file ? a.file.size : 0) - (b.file ? b.file.size : 0));
+    }
+    if (s3SortBy === "date") {
+      if (a.type === "dir") return d * a.name.localeCompare(b.name);
+      const dA = a.file ? new Date(a.file.last_modified).getTime() : 0;
+      const dB = b.file ? new Date(b.file.last_modified).getTime() : 0;
+      return d * (dA - dB);
+    }
+    return d * a.name.localeCompare(b.name);
   });
   let count = 0;
   node.children.forEach(child => {
