@@ -96,6 +96,8 @@
   .btn-green:hover:not(:disabled) { background: rgba(34,214,122,.25); }
   .btn-red { background: rgba(255,77,109,.12); color: var(--red); border: 1px solid rgba(255,77,109,.3); }
   .btn-red:hover:not(:disabled) { background: rgba(255,77,109,.22); }
+  .btn-orange { background: rgba(255,140,66,.12); color: var(--orange); border: 1px solid rgba(255,140,66,.3); }
+  .btn-orange:hover:not(:disabled) { background: rgba(255,140,66,.22); }
   .btn-sm { padding: 5px 10px; font-size: 11px; }
 
   /* Progress overlay */
@@ -232,6 +234,7 @@
         <span class="sel-size" id="sel-size"></span>
         <button class="btn btn-red btn-sm" id="delete-local-btn" disabled onclick="confirmDeleteLocal()">🗑 Delete Local</button>
         <button class="btn btn-primary" id="upload-btn" disabled onclick="startUpload()">☁ Send to S3</button>
+        <button class="btn btn-orange" id="offload-btn" disabled onclick="startOffload()">⚡ Offload</button>
         <button class="btn btn-red btn-sm" id="delete-folder-btn" disabled onclick="confirmDeleteFolder()" style="display:none">🗑 Delete Folder</button>
       </div>
     </div>
@@ -815,6 +818,7 @@ function updateLocalBar() {
   const totalSize = allFiles.filter(f => selectedFiles.has(f.path)).reduce((s, f) => s + (f.size || 0), 0);
   document.getElementById("sel-size").textContent = totalSize > 0 ? fmtSize(totalSize) : "";
   document.getElementById("upload-btn").disabled = count === 0;
+  document.getElementById("offload-btn").disabled = count === 0;
   document.getElementById("delete-local-btn").disabled = count === 0;
 
   // Show delete folder button if a folder is fully selected
@@ -1140,6 +1144,33 @@ async function startUpload() {
   });
   trackJob(jobId, `Uploading ${paths.length} file${paths.length !== 1 ? "s" : ""} to S3`, () => {
     refreshTree(); refreshS3();
+  });
+}
+
+async function startOffload() {
+  if (!selectedFiles.size) return;
+  const paths = Array.from(selectedFiles);
+  const jobId = "upload_" + Date.now();
+  await fetch("/api/upload", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths, job_id: jobId })
+  });
+  trackJob(jobId, `Offloading ${paths.length} file${paths.length !== 1 ? "s" : ""} to S3…`, async () => {
+    try {
+      const r = await fetch("/api/delete_local", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths })
+      });
+      const data = await r.json();
+      if (data.errors && data.errors.length) {
+        notify(`Uploaded but ${data.errors.length} delete error(s)`, "error");
+      } else {
+        notify(`Offloaded ${paths.length} file${paths.length !== 1 ? "s" : ""} — on S3, freed locally`, "success");
+      }
+    } catch (e) {
+      notify("Uploaded to S3 but failed to delete locally: " + e.message, "error");
+    }
+    refreshTree(); refreshS3(); refreshDisk();
   });
 }
 
