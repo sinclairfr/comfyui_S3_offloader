@@ -4,6 +4,7 @@ Scans local model directories, uploads to S3 with path metadata for 1-click rest
 """
 
 import os
+import shutil
 import threading
 import datetime
 import hashlib
@@ -517,6 +518,16 @@ def trigger_background_refresh(force_s3_refresh: bool = False):
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+@app.route("/api/disk")
+def get_disk():
+    path = os.path.expanduser(MODELS_ROOT or "/")
+    if not os.path.exists(path):
+        path = "/"
+    usage = shutil.disk_usage(path)
+    pct_used = round(usage.used / usage.total * 100, 1) if usage.total else 0
+    return jsonify({"total": usage.total, "used": usage.used, "free": usage.free, "pct_used": pct_used})
 
 
 @app.route("/api/config")

@@ -150,6 +150,13 @@
   .log-level.warning { color: var(--orange); }
   .log-msg { flex: 1; word-break: break-all; }
 
+  /* Disk gauge */
+  .disk-strip { display: flex; align-items: center; gap: 12px; padding: 0 24px; height: 28px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+  .disk-strip-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .6px; white-space: nowrap; flex-shrink: 0; }
+  .disk-strip-bar { flex: 1; max-width: 220px; height: 5px; background: var(--border2); border-radius: 3px; overflow: hidden; }
+  .disk-strip-fill { height: 100%; border-radius: 3px; transition: width .6s ease, background-color .6s ease; }
+  .disk-strip-text { font-size: 11px; color: var(--text2); white-space: nowrap; }
+
   /* Sort bar */
   .sort-bar { display: flex; align-items: center; gap: 4px; padding: 5px 12px 6px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .sort-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; margin-right: 2px; flex-shrink: 0; }
@@ -166,6 +173,14 @@
     S3 Offloader
   </div>
   <span id="bucket-display" style="font-size:11px;color:var(--text3)">Loading...</span>
+</div>
+
+<div class="disk-strip">
+  <span class="disk-strip-label">💿 Disk</span>
+  <div class="disk-strip-bar">
+    <div class="disk-strip-fill" id="disk-fill" style="width:0%;background:var(--green)"></div>
+  </div>
+  <span class="disk-strip-text" id="disk-text">—</span>
 </div>
 
 <div class="tabs">
@@ -365,6 +380,23 @@ async function init() {
   await loadConfig();
   refreshTree();
   refreshS3();
+  refreshDisk();
+  setInterval(refreshDisk, 30000);
+}
+
+async function refreshDisk() {
+  try {
+    const r = await fetch("/api/disk");
+    if (!r.ok) return;
+    const d = await r.json();
+    const fill = document.getElementById("disk-fill");
+    const text = document.getElementById("disk-text");
+    const color = d.pct_used > 90 ? "var(--red)" : d.pct_used > 70 ? "var(--orange)" : "var(--green)";
+    fill.style.width = d.pct_used + "%";
+    fill.style.background = color;
+    text.textContent = `${fmtSize(d.free)} free / ${fmtSize(d.total)} — ${d.pct_used}% used`;
+    text.style.color = d.pct_used > 90 ? "var(--red)" : d.pct_used > 70 ? "var(--orange)" : "var(--text2)";
+  } catch {}
 }
 
 function setupLocalControls() {
