@@ -522,10 +522,22 @@ def index():
 
 @app.route("/api/disk")
 def get_disk():
-    path = os.path.expanduser(MODELS_ROOT or "/")
-    if not os.path.exists(path):
-        path = "/"
-    usage = shutil.disk_usage(path)
+    # Walk up from models_root to find an existing ancestor path
+    p = os.path.expanduser(MODELS_ROOT or "")
+    while p and p != os.path.dirname(p):
+        if os.path.exists(p):
+            break
+        p = os.path.dirname(p)
+    # If we landed on / or found nothing, prefer /workspace when it's a separate mount
+    if not p or p == "/":
+        try:
+            if os.path.exists("/workspace") and os.stat("/workspace").st_dev != os.stat("/").st_dev:
+                p = "/workspace"
+            else:
+                p = "/"
+        except OSError:
+            p = "/"
+    usage = shutil.disk_usage(p)
     pct_used = round(usage.used / usage.total * 100, 1) if usage.total else 0
     return jsonify({"total": usage.total, "used": usage.used, "free": usage.free, "pct_used": pct_used})
 
