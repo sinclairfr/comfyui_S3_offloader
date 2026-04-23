@@ -1322,7 +1322,7 @@ async function clearLogs() {
 
 // --- Utils ---
 function fmtSize(b) {
-  const u = ["B","KB","MB","GB"];
+  const u = ["B","KB","MB","GB","TB","PB"];
   let i = 0;
   while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return `${b.toFixed(1)} ${u[i]}`;
