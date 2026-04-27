@@ -459,11 +459,41 @@ async function saveConfig() {
 async function restartApp() {
   if (!confirm("Restart the application now? Ongoing operations may stop.")) return;
   try {
-    await fetch("/api/restart", { method: "POST" });
-    notify("Restart requested... reconnecting", "success");
-    setTimeout(() => {
-      window.location.reload();
-    }, 1500);
+    const r = await fetch("/api/restart", { method: "POST" });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({ error: "Failed to request restart" }));
+      throw new Error(e.error || "Failed to request restart");
+    }
+
+    notify("Restart requested... waiting for server", "success");
+
+    const maxWaitMs = 45000;
+    const stepMs = 1200;
+    const startedAt = Date.now();
+
+    const ping = async () => {
+      try {
+        const health = await fetch(`/api/disk?t=${Date.now()}`, { cache: "no-store" });
+        return health.ok;
+      } catch {
+        return false;
+      }
+    };
+
+    // First wait a bit to let current process stop.
+    await new Promise(res => setTimeout(res, 1000));
+
+    while (Date.now() - startedAt < maxWaitMs) {
+      const up = await ping();
+      if (up) {
+        notify("Server back online", "success");
+        window.location.reload();
+        return;
+      }
+      await new Promise(res => setTimeout(res, stepMs));
+    }
+
+    notify("Restart requested, but server did not come back in time", "error");
   } catch (e) {
     notify("Failed to request restart: " + e.message, "error");
   }
