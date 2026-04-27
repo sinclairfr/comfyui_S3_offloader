@@ -13,6 +13,8 @@ import json
 import argparse
 import sys
 import time
+import signal
+import subprocess
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 import boto3
@@ -956,7 +958,28 @@ def clear_logs():
 def _restart_process():
     # Give Flask time to send HTTP response before replacing process.
     time.sleep(0.3)
-    os.execv(sys.executable, [sys.executable, *sys.argv])
+    try:
+        script_path = os.path.abspath(__file__)
+        restart_cmd = [sys.executable, script_path, "--port", str(args.port)]
+        add_log("warning", f"Restart (kill + relaunch): {' '.join(restart_cmd)}")
+
+        # Launch next instance with a slight delay so current process can terminate first
+        launch_cmd = (
+            f"sleep 0.6; "
+            f"exec {sys.executable} {script_path} --port {args.port}"
+        )
+        subprocess.Popen(
+            ["/bin/bash", "-lc", launch_cmd],
+            cwd=os.path.dirname(script_path) or ".",
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        # Kill current process after scheduling relaunch
+        os.kill(os.getpid(), signal.SIGTERM)
+    except Exception as e:
+        add_log("error", f"Restart failed: {e}")
 
 
 @app.route("/api/restart", methods=["POST"])
