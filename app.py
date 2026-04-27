@@ -696,26 +696,48 @@ def upload_files():
     if not S3_BUCKET:
         return jsonify({"error": "No S3 bucket configured"}), 400
 
-    total_bytes = sum(os.path.getsize(p) for p in paths if os.path.exists(p))
+    # Refresh S3 key set to avoid unnecessary re-upload when object already exists.
+    existing_s3_keys = get_s3_keys_cached(force_refresh=True)
+    upload_plan = []
+    skipped_pre_count = 0
+    total_bytes = 0
+    for p in paths:
+        s3_key = get_s3_key(p)
+        already_on_s3 = s3_key in existing_s3_keys
+        upload_plan.append((p, s3_key, already_on_s3))
+        if already_on_s3:
+            skipped_pre_count += 1
+            continue
+        if os.path.exists(p):
+            total_bytes += os.path.getsize(p)
+
     jobs[job_id] = {
         "total_files": len(paths),
         "done_files": 0,
         "total_bytes": total_bytes,
         "transferred_bytes": 0,
+        "skipped_files": 0,
         "current": "",
         "errors": [],
         "finished": False,
     }
 
-    add_log("info", f"Upload started — {len(paths)} file(s)")
+    add_log(
+        "info",
+        f"Upload started — {len(paths)} file(s), {skipped_pre_count} already on S3",
+    )
 
     def do_upload():
         s3 = get_s3_client()
         job = jobs[job_id]
-        for path in paths:
+        for path, s3_key, already_on_s3 in upload_plan:
             job["current"] = os.path.basename(path)
             try:
-                s3_key = get_s3_key(path)
+                if already_on_s3:
+                    job["done_files"] += 1
+                    job["skipped_files"] += 1
+                    add_log("info", f"Skipped (already on S3): {os.path.basename(path)}")
+                    continue
 
                 # FIX: use make_callback to properly capture job ref in closure
                 def make_callback(j):
@@ -732,10 +754,15 @@ def upload_files():
                 job["done_files"] += 1
                 add_log("error", f"Upload failed {os.path.basename(path)}: {e}")
         errs = len(job["errors"])
+        skipped = job.get("skipped_files", 0)
+        uploaded = job["done_files"] - errs - skipped
         add_log(
-            "info", f"Upload done — {job['done_files'] - errs} succeeded, {errs} errors"
+            "info",
+            f"Upload done — {uploaded} uploaded, {skipped} skipped, {errs} errors",
         )
         job["finished"] = True
+        # Avoid stale UI after upload: force next /api/files to rebuild tree with fresh S3 state.
+        invalidate_scan_caches()
         trigger_background_refresh(force_s3_refresh=True)
 
     threading.Thread(target=do_upload, daemon=True).start()

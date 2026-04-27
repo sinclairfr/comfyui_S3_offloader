@@ -744,6 +744,13 @@ function buildNode(node, depth, forceOpen = false) {
 
     item.append(indent, chev, chk, icon, name, meta);
 
+    if (folderHasOnS3(node)) {
+      const badge = document.createElement("span");
+      badge.className = "s3-badge";
+      badge.textContent = "S3";
+      item.appendChild(badge);
+    }
+
     const childContainer = document.createElement("div");
     if (isOpen && node.children) node.children.forEach(c => childContainer.appendChild(buildNode(c, depth + 1, forceOpen)));
 
