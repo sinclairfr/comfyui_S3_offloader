@@ -327,6 +327,7 @@
         </div>
       </div>
       <button class="btn btn-primary" onclick="saveConfig()">Save & Refresh</button>
+      <button class="btn btn-secondary" onclick="restartApp()" style="margin-left:8px">↻ Restart App</button>
       <p style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.9;">
         Credentials: <code style="color:var(--accent)">~/.aws/credentials</code> or env vars
         <code style="color:var(--accent)">AWS_ACCESS_KEY_ID</code> / <code style="color:var(--accent)">AWS_SECRET_ACCESS_KEY</code><br>
@@ -453,6 +454,19 @@ async function saveConfig() {
   refreshS3();
   notify("Config saved", "success");
   switchTab("local");
+}
+
+async function restartApp() {
+  if (!confirm("Restart the application now? Ongoing operations may stop.")) return;
+  try {
+    await fetch("/api/restart", { method: "POST" });
+    notify("Restart requested... reconnecting", "success");
+    setTimeout(() => {
+      window.location.reload();
+    }, 1500);
+  } catch (e) {
+    notify("Failed to request restart: " + e.message, "error");
+  }
 }
 
 function parsePersonalPathsText(text) {
@@ -686,7 +700,7 @@ function buildNode(node, depth, forceOpen = false) {
     chev.textContent = "▶";
 
     const chk = document.createElement("span");
-    chk.className = "checkbox" + (selectedFiles.has(node.path) ? " checked" : "");
+    chk.className = "checkbox" + (isFolderFullySelected(node) ? " checked" : "");
 
     const icon = document.createElement("span");
     icon.className = "icon";
@@ -766,6 +780,19 @@ function collectAllFiles(node) {
   if (!node) return [];
   if (node.type === "file") return [node];
   return (node.children || []).flatMap(collectAllFiles);
+}
+
+function folderHasOnS3(node) {
+  if (!node || node.type !== "dir") return false;
+  return (node.children || []).some(child => {
+    if (child.type === "file") return !!child.on_s3;
+    return folderHasOnS3(child);
+  });
+}
+
+function isFolderFullySelected(node) {
+  const files = collectAllFiles(node);
+  return files.length > 0 && files.every(f => selectedFiles.has(f.path));
 }
 
 function selectAll() {
@@ -1028,6 +1055,13 @@ function buildS3TreeNode(node, depth, forceOpen = false) {
     meta.textContent = node.file_count > 0 ? node.file_count : "";
 
     item.append(indent, chev, chk, icon, name, meta);
+
+    if (folderHasOnS3(node)) {
+      const badge = document.createElement("span");
+      badge.className = "s3-badge";
+      badge.textContent = "S3";
+      item.appendChild(badge);
+    }
 
     const children = document.createElement("div");
     if (isOpen) node.children.forEach(child => children.appendChild(buildS3TreeNode(child, depth + 1, forceOpen)));

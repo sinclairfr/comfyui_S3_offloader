@@ -82,10 +82,13 @@ CONFIG_FILE=/chemin/vers/mes-settings.json python app.py
 - **Local Files tab** : browse ton dossier de modèles, coche les fichiers, "Send to S3"
   - recherche live dans l’arborescence locale
   - sélection "All" appliquée sur les résultats visibles (filtrés)
+  - checkbox dossier = sélection/désélection récursive de tous les fichiers du dossier
+  - badge `S3` visible aussi sur les dossiers parents si au moins un fichier descendant est déjà sur S3
 - **On S3 tab** : liste tout ce qui est sur S3, coche, "Restore to Original Location" — aucune saisie requise
   - recherche live (nom, chemin relatif, key S3, chemin local)
   - vue arborescence (Tree) + bascule Tree/List
 - **Config tab** : change `models_root`, `s3_bucket`, `s3_prefix`, `aws_profile`, `include_personal_stuff`, `personal_paths` à la volée (et sauvegarde dans [`settings.json`](settings.json))
+  - bouton `↻ Restart App` pour redémarrer l’application depuis l’UI
 
 ## UI — recherche & navigation
 
@@ -93,6 +96,8 @@ CONFIG_FILE=/chemin/vers/mes-settings.json python app.py
   - Champ `Search local files...`
   - Filtre l’arborescence en temps réel
   - Les dossiers correspondants sont auto-dépliés pendant la recherche
+  - Le coche d’un dossier reflète correctement l’état "tout sélectionné" des fichiers descendants
+  - Le badge `S3` est affiché sur les fichiers **et** dossiers contenant des fichiers uploadés
 
 - **On S3**
   - Champ `Search path, filename, key...`
@@ -109,6 +114,10 @@ Le S3 key est construit à partir de `s3_prefix` + un chemin relatif à la sourc
 Exemple modèle : `/home/mehdi/models/checkpoints/v1.safetensors` → `models-offload/models/checkpoints/v1.safetensors`.
 
 Aucun fichier de metadata externe, tout est dans la structure du S3 key.
+
+## API utile (UI)
+
+- `POST /api/restart` : redémarre le process Flask (appelé par le bouton `Restart App` dans l’onglet Config).
 
 ## Extensions scannées
 

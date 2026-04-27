@@ -11,6 +11,8 @@ import hashlib
 import re
 import json
 import argparse
+import sys
+import time
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 import boto3
@@ -949,6 +951,19 @@ def get_logs():
 def clear_logs():
     logs.clear()
     return jsonify({"status": "ok"})
+
+
+def _restart_process():
+    # Give Flask time to send HTTP response before replacing process.
+    time.sleep(0.3)
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
+@app.route("/api/restart", methods=["POST"])
+def restart_app():
+    add_log("warning", "Application restart requested from UI")
+    threading.Thread(target=_restart_process, daemon=True).start()
+    return jsonify({"status": "restarting"})
 
 
 if __name__ == "__main__":
