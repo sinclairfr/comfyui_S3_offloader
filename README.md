@@ -62,6 +62,8 @@ Pour éviter la confusion, recommandé :
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_SESSION_TOKEN` (optionnel)
+- `S3_ENDPOINT_URL` (optionnel)
+- `R2_URL` (optionnel, alias pratique pour Cloudflare R2)
 
 L'app accepte soit un profil AWS, soit des clés directes.
 
@@ -72,6 +74,8 @@ Fichier par défaut :
   "models_root": "~/models",
   "s3_bucket": "",
   "s3_prefix": "models-offload/",
+  "s3_endpoint_url": "",
+  "r2_url": "",
   "aws_profile": null,
   "include_personal_stuff": false,
   "personal_paths": [
@@ -81,6 +85,17 @@ Fichier par défaut :
     "/workspace/medo_start.sh"
   ]
 }
+```
+
+
+Exemple `.env` pour R2:
+
+```bash
+AWS_ACCESS_KEY_ID=ton_access_key_r2
+AWS_SECRET_ACCESS_KEY=ton_secret_key_r2
+R2_URL=https://e6a3d37db1abc84616e252a24bf78113.r2.cloudflarestorage.com
+# Optionnel: tu peux aussi utiliser S3_ENDPOINT_URL à la place
+# S3_ENDPOINT_URL=https://e6a3d37db1abc84616e252a24bf78113.r2.cloudflarestorage.com
 ```
 
 Tu peux aussi changer le chemin du fichier via la variable d'environnement `CONFIG_FILE`.

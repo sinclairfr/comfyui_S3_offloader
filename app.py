@@ -55,7 +55,8 @@ def _default_settings() -> dict:
         "models_root": os.getenv("MODELS_ROOT", "~/models"),
         "s3_bucket": os.getenv("S3_BUCKET", ""),
         "s3_prefix": os.getenv("S3_PREFIX", "models-offload/"),
-        "s3_endpoint_url": os.getenv("S3_ENDPOINT_URL", ""),
+        "s3_endpoint_url": os.getenv("S3_ENDPOINT_URL", "").strip() or os.getenv("R2_URL", "").strip(),
+        "r2_url": os.getenv("R2_URL", ""),
         "aws_profile": os.getenv("AWS_PROFILE", None),
         "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID", None),
         "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY", None),
@@ -79,6 +80,9 @@ def _normalize_settings(raw: dict) -> dict:
     merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
     merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
     merged["s3_endpoint_url"] = str(merged.get("s3_endpoint_url") or "").strip()
+    merged["r2_url"] = str(merged.get("r2_url") or merged["s3_endpoint_url"] or "").strip()
+    if not merged["s3_endpoint_url"] and merged["r2_url"]:
+        merged["s3_endpoint_url"] = merged["r2_url"]
     merged["aws_profile"] = str(merged.get("aws_profile") or "").strip() or None
     merged["aws_access_key_id"] = (
         str(merged.get("aws_access_key_id") or "").strip() or None
