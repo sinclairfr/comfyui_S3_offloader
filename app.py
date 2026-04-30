@@ -55,6 +55,7 @@ def _default_settings() -> dict:
         "models_root": os.getenv("MODELS_ROOT", "~/models"),
         "s3_bucket": os.getenv("S3_BUCKET", ""),
         "s3_prefix": os.getenv("S3_PREFIX", "models-offload/"),
+        "s3_endpoint_url": os.getenv("S3_ENDPOINT_URL", ""),
         "aws_profile": os.getenv("AWS_PROFILE", None),
         "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID", None),
         "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY", None),
@@ -63,6 +64,10 @@ def _default_settings() -> dict:
         "personal_paths": parse_personal_paths(
             os.getenv("PERSONAL_PATHS", ",".join(DEFAULT_PERSONAL_PATHS))
         ),
+        "comfyui_base": os.getenv("COMFYUI_BASE", "/workspace/ComfyUI"),
+        "comfyui_username": os.getenv("COMFYUI_USERNAME", "default"),
+        "sync_folders": ["input", "output", "user"],
+        "platform_name": os.getenv("PLATFORM_NAME", ""),
     }
 
 
@@ -73,6 +78,7 @@ def _normalize_settings(raw: dict) -> dict:
     )
     merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
     merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
+    merged["s3_endpoint_url"] = str(merged.get("s3_endpoint_url") or "").strip()
     merged["aws_profile"] = str(merged.get("aws_profile") or "").strip() or None
     merged["aws_access_key_id"] = (
         str(merged.get("aws_access_key_id") or "").strip() or None
@@ -89,6 +95,16 @@ def _normalize_settings(raw: dict) -> dict:
         for p in (merged.get("personal_paths") or [])
         if str(p).strip()
     ]
+    merged["comfyui_base"] = os.path.expanduser(
+        str(merged.get("comfyui_base") or "/workspace/ComfyUI")
+    )
+    merged["comfyui_username"] = str(merged.get("comfyui_username") or "default").strip() or "default"
+    merged["sync_folders"] = [
+        str(f).strip()
+        for f in (merged.get("sync_folders") or ["input", "output", "user"])
+        if str(f).strip()
+    ]
+    merged["platform_name"] = str(merged.get("platform_name") or "").strip()
     return merged
 
 
@@ -148,12 +164,17 @@ _SETTINGS = load_settings()
 MODELS_ROOT = _SETTINGS["models_root"]
 S3_BUCKET = _SETTINGS["s3_bucket"]
 S3_PREFIX = _SETTINGS["s3_prefix"]
+S3_ENDPOINT_URL = _SETTINGS["s3_endpoint_url"]
 AWS_PROFILE = _SETTINGS["aws_profile"]
 AWS_ACCESS_KEY_ID = _SETTINGS["aws_access_key_id"]
 AWS_SECRET_ACCESS_KEY = _SETTINGS["aws_secret_access_key"]
 AWS_SESSION_TOKEN = _SETTINGS["aws_session_token"]
 INCLUDE_PERSONAL_STUFF = _SETTINGS["include_personal_stuff"]
 PERSONAL_PATHS = _SETTINGS["personal_paths"]
+COMFYUI_BASE = _SETTINGS["comfyui_base"]
+COMFYUI_USERNAME = _SETTINGS["comfyui_username"]
+SYNC_FOLDERS = _SETTINGS["sync_folders"]
+PLATFORM_NAME = _SETTINGS["platform_name"]
 SCAN_EXCLUDE_DIRS = set(
     p.lower()
     for p in parse_csv(
@@ -214,6 +235,7 @@ def get_s3_client():
     secret_key = str(AWS_SECRET_ACCESS_KEY or "").strip()
     session_token = str(AWS_SESSION_TOKEN or "").strip() or None
     profile = str(AWS_PROFILE or "").strip() or None
+    endpoint_url = str(S3_ENDPOINT_URL or "").strip() or None
 
     # Guard against empty profile env vars (e.g. AWS_PROFILE="") which
     # botocore treats as an explicit (invalid) profile name.
@@ -232,7 +254,12 @@ def get_s3_client():
             session = boto3.Session(profile_name=profile)
         else:
             session = boto3.Session()
-    return session.client("s3")
+
+    client_kwargs = {"endpoint_url": endpoint_url} if endpoint_url else {}
+    # Cloudflare R2 and some S3-compatible stores require path-style addressing
+    if endpoint_url:
+        client_kwargs["config"] = boto3.session.Config(s3={"addressing_style": "path"})
+    return session.client("s3", **client_kwargs)
 
 
 def is_model_file(path: Path) -> bool:
@@ -555,19 +582,24 @@ def get_config():
             "models_root": MODELS_ROOT,
             "s3_bucket": S3_BUCKET,
             "s3_prefix": S3_PREFIX,
+            "s3_endpoint_url": S3_ENDPOINT_URL or "",
             "aws_profile": AWS_PROFILE or "",
             "aws_access_key_id": AWS_ACCESS_KEY_ID or "",
             "aws_secret_access_key": AWS_SECRET_ACCESS_KEY or "",
             "aws_session_token": AWS_SESSION_TOKEN or "",
             "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
             "personal_paths": PERSONAL_PATHS,
+            "comfyui_base": COMFYUI_BASE,
+            "comfyui_username": COMFYUI_USERNAME,
+            "sync_folders": SYNC_FOLDERS,
+            "platform_name": PLATFORM_NAME,
         }
     )
 
 
 @app.route("/api/config", methods=["POST"])
 def update_config():
-    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS
+    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, S3_ENDPOINT_URL, AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS, COMFYUI_BASE, COMFYUI_USERNAME, SYNC_FOLDERS, PLATFORM_NAME
     d = request.json or {}
     if "models_root" in d:
         MODELS_ROOT = os.path.expanduser(d["models_root"])
@@ -575,6 +607,8 @@ def update_config():
         S3_BUCKET = d["s3_bucket"]
     if "s3_prefix" in d:
         S3_PREFIX = d["s3_prefix"]
+    if "s3_endpoint_url" in d:
+        S3_ENDPOINT_URL = str(d["s3_endpoint_url"] or "").strip()
     if "aws_profile" in d:
         AWS_PROFILE = str(d["aws_profile"] or "").strip() or None
     if "aws_access_key_id" in d:
@@ -591,18 +625,31 @@ def update_config():
             for p in d["personal_paths"]
             if str(p).strip()
         ]
+    if "comfyui_base" in d:
+        COMFYUI_BASE = os.path.expanduser(str(d["comfyui_base"] or "/workspace/ComfyUI"))
+    if "comfyui_username" in d:
+        COMFYUI_USERNAME = str(d["comfyui_username"] or "default").strip() or "default"
+    if "sync_folders" in d:
+        SYNC_FOLDERS = [str(f).strip() for f in d["sync_folders"] if str(f).strip()]
+    if "platform_name" in d:
+        PLATFORM_NAME = str(d.get("platform_name") or "").strip()
     try:
         save_settings(
             {
                 "models_root": MODELS_ROOT,
                 "s3_bucket": S3_BUCKET,
                 "s3_prefix": S3_PREFIX,
+                "s3_endpoint_url": S3_ENDPOINT_URL,
                 "aws_profile": AWS_PROFILE,
                 "aws_access_key_id": AWS_ACCESS_KEY_ID,
                 "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
                 "aws_session_token": AWS_SESSION_TOKEN,
                 "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
                 "personal_paths": PERSONAL_PATHS,
+                "comfyui_base": COMFYUI_BASE,
+                "comfyui_username": COMFYUI_USERNAME,
+                "sync_folders": SYNC_FOLDERS,
+                "platform_name": PLATFORM_NAME,
             }
         )
     except Exception as e:
@@ -906,6 +953,259 @@ def delete_local():
     return jsonify(
         {"deleted": len(deleted), "deleted_paths": deleted, "errors": errors}
     )
+
+
+# --- Sync helpers ---
+
+
+def _get_sync_s3_prefix() -> str:
+    return f"{S3_PREFIX}sync/"
+
+
+def _list_s3_sync_objects(folders: list) -> dict:
+    """Return {rel_path: {key, size, last_modified}} for the given folders under the sync prefix."""
+    prefix = _get_sync_s3_prefix()
+    result = {}
+    s3 = get_s3_client()
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            rel = key[len(prefix):]
+            if not rel:
+                continue
+            folder = rel.split("/")[0]
+            if folder in folders:
+                result[rel] = {
+                    "key": key,
+                    "size": obj["Size"],
+                    "last_modified": obj["LastModified"].isoformat(),
+                }
+    return result
+
+
+def _scan_local_sync_files(folders: list) -> dict:
+    """Return {rel_path: {path, size, mtime}} for all files in the given sync folders."""
+    base = Path(COMFYUI_BASE)
+    result = {}
+    for folder in folders:
+        folder_path = base / folder
+        if not folder_path.exists():
+            continue
+        try:
+            for p in sorted(folder_path.rglob("*")):
+                if p.is_file():
+                    rel = str(p.relative_to(base)).replace(os.sep, "/")
+                    stat = p.stat()
+                    result[rel] = {"path": str(p), "size": stat.st_size, "mtime": stat.st_mtime}
+        except (PermissionError, OSError):
+            pass
+    return result
+
+
+# --- Sync endpoints ---
+
+
+@app.route("/api/sync/status")
+def sync_status():
+    if not S3_BUCKET:
+        return jsonify({"error": "No S3 bucket configured"}), 400
+
+    folders = request.args.getlist("folders") or SYNC_FOLDERS
+    base = Path(COMFYUI_BASE)
+
+    try:
+        s3_objects = _list_s3_sync_objects(folders)
+    except NoCredentialsError:
+        return jsonify({"error": "AWS credentials not found"}), 401
+    except ProfileNotFound as e:
+        return jsonify({"error": f"AWS profile error: {e}"}), 400
+    except (ClientError, BotoCoreError, Exception) as e:
+        return jsonify({"error": f"S3 error: {e}"}), 500
+
+    local_files = _scan_local_sync_files(folders)
+
+    folder_stats = {}
+    for folder in folders:
+        local_subset = {k: v for k, v in local_files.items() if k.startswith(f"{folder}/")}
+        s3_subset = {k: v for k, v in s3_objects.items() if k.startswith(f"{folder}/")}
+
+        local_keys = set(local_subset)
+        s3_keys = set(s3_subset)
+        both = local_keys & s3_keys
+
+        folder_stats[folder] = {
+            "exists": (base / folder).exists(),
+            "local_count": len(local_subset),
+            "s3_count": len(s3_subset),
+            "local_only_count": len(local_keys - s3_keys),
+            "s3_only_count": len(s3_keys - local_keys),
+            "in_sync_count": sum(1 for r in both if local_subset[r]["size"] == s3_subset[r]["size"]),
+            "different_count": sum(1 for r in both if local_subset[r]["size"] != s3_subset[r]["size"]),
+            "local_size": sum(v["size"] for v in local_subset.values()),
+            "s3_size": sum(v["size"] for v in s3_subset.values()),
+        }
+
+    return jsonify({
+        "folders": folder_stats,
+        "comfyui_base": COMFYUI_BASE,
+        "comfyui_username": COMFYUI_USERNAME,
+        "sync_s3_prefix": _get_sync_s3_prefix(),
+        "platform_name": PLATFORM_NAME,
+    })
+
+
+@app.route("/api/sync/push", methods=["POST"])
+def sync_push():
+    data = request.json or {}
+    folders = data.get("folders") or SYNC_FOLDERS
+    job_id = data.get("job_id", f"sync_push_{int(time.time())}")
+    force = bool(data.get("force", False))
+
+    if not S3_BUCKET:
+        return jsonify({"error": "No S3 bucket configured"}), 400
+
+    base = Path(COMFYUI_BASE)
+    sync_prefix = _get_sync_s3_prefix()
+
+    # Fetch existing S3 objects for smart skip (skip when size matches)
+    existing_s3 = {}
+    if not force:
+        try:
+            existing_s3 = {rel: info["size"] for rel, info in _list_s3_sync_objects(folders).items()}
+        except Exception as e:
+            add_log("warning", f"Sync push: could not fetch existing S3 objects: {e}")
+
+    local_files = _scan_local_sync_files(folders)
+
+    upload_plan = []
+    total_bytes = 0
+    for rel, info in sorted(local_files.items()):
+        s3_key = f"{sync_prefix}{rel}"
+        skip = (not force) and rel in existing_s3 and existing_s3[rel] == info["size"]
+        upload_plan.append((info["path"], s3_key, info["mtime"], skip))
+        if not skip:
+            total_bytes += info["size"]
+
+    skipped_pre = sum(1 for _, _, _, s in upload_plan if s)
+    jobs[job_id] = {
+        "total_files": len(upload_plan),
+        "done_files": 0,
+        "total_bytes": total_bytes,
+        "transferred_bytes": 0,
+        "skipped_files": 0,
+        "current": "",
+        "errors": [],
+        "finished": False,
+    }
+
+    add_log("info", f"Sync push started — {len(upload_plan)} files, {skipped_pre} already in sync")
+
+    def do_push():
+        s3 = get_s3_client()
+        job = jobs[job_id]
+        for local_path, s3_key, mtime, skip in upload_plan:
+            job["current"] = os.path.basename(local_path)
+            if skip:
+                job["done_files"] += 1
+                job["skipped_files"] += 1
+                continue
+            try:
+                def make_cb(j):
+                    def cb(n): j["transferred_bytes"] += n
+                    return cb
+                s3.upload_file(
+                    local_path, S3_BUCKET, s3_key,
+                    ExtraArgs={"Metadata": {"local-mtime": str(mtime)}},
+                    Callback=make_cb(job),
+                )
+                job["done_files"] += 1
+                add_log("success", f"Sync pushed: {os.path.basename(local_path)}")
+            except Exception as e:
+                job["errors"].append({"path": local_path, "error": str(e)})
+                job["done_files"] += 1
+                add_log("error", f"Sync push failed {os.path.basename(local_path)}: {e}")
+        skipped = job.get("skipped_files", 0)
+        errs = len(job["errors"])
+        add_log("info", f"Sync push done — {job['done_files'] - errs - skipped} uploaded, {skipped} skipped, {errs} errors")
+        job["finished"] = True
+
+    threading.Thread(target=do_push, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/sync/pull", methods=["POST"])
+def sync_pull():
+    data = request.json or {}
+    folders = data.get("folders") or SYNC_FOLDERS
+    job_id = data.get("job_id", f"sync_pull_{int(time.time())}")
+    force = bool(data.get("force", False))
+
+    if not S3_BUCKET:
+        return jsonify({"error": "No S3 bucket configured"}), 400
+
+    base = Path(COMFYUI_BASE)
+
+    try:
+        s3_objects = _list_s3_sync_objects(folders)
+    except NoCredentialsError:
+        return jsonify({"error": "AWS credentials not found"}), 401
+    except ProfileNotFound as e:
+        return jsonify({"error": f"AWS profile error: {e}"}), 400
+    except (ClientError, BotoCoreError, Exception) as e:
+        return jsonify({"error": f"S3 error: {e}"}), 500
+
+    download_plan = []
+    total_bytes = 0
+    for rel, info in sorted(s3_objects.items()):
+        local_path = str(base / rel)
+        skip = (not force) and os.path.exists(local_path) and os.path.getsize(local_path) == info["size"]
+        download_plan.append((info["key"], local_path, info["size"], skip))
+        if not skip:
+            total_bytes += info["size"]
+
+    skipped_pre = sum(1 for _, _, _, s in download_plan if s)
+    jobs[job_id] = {
+        "total_files": len(download_plan),
+        "done_files": 0,
+        "total_bytes": total_bytes,
+        "transferred_bytes": 0,
+        "skipped_files": 0,
+        "current": "",
+        "errors": [],
+        "finished": False,
+    }
+
+    add_log("info", f"Sync pull started — {len(download_plan)} files, {skipped_pre} already in sync")
+
+    def do_pull():
+        s3 = get_s3_client()
+        job = jobs[job_id]
+        for key, local_path, size, skip in download_plan:
+            job["current"] = os.path.basename(local_path)
+            if skip:
+                job["done_files"] += 1
+                job["skipped_files"] += 1
+                continue
+            try:
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                def make_cb(j):
+                    def cb(n): j["transferred_bytes"] += n
+                    return cb
+                s3.download_file(S3_BUCKET, key, local_path, Callback=make_cb(job))
+                job["done_files"] += 1
+                add_log("success", f"Sync pulled: {os.path.basename(local_path)}")
+            except Exception as e:
+                job["errors"].append({"key": key, "error": str(e)})
+                job["done_files"] += 1
+                add_log("error", f"Sync pull failed {os.path.basename(local_path)}: {e}")
+        skipped = job.get("skipped_files", 0)
+        errs = len(job["errors"])
+        add_log("info", f"Sync pull done — {job['done_files'] - errs - skipped} downloaded, {skipped} skipped, {errs} errors")
+        job["finished"] = True
+
+    threading.Thread(target=do_pull, daemon=True).start()
+    return jsonify({"job_id": job_id})
 
 
 # --- Delete from S3 ---
