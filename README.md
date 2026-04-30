@@ -1,6 +1,6 @@
-# S3 Model Offloader
+# S3 / R2 Model Offloader
 
-Web UI locale pour offloader tes modèles vers S3 et les restaurer en 1 clic.
+Web UI locale pour offloader tes modèles vers **S3-compatible storage** (AWS S3 ou Cloudflare R2) et les restaurer en 1 clic.
 
 ## Setup
 
@@ -36,6 +36,11 @@ Avec `--port 5050`, l'URL devient `http://localhost:5050`.
 
 Les settings runtime sont persistés dans [`settings.json`](settings.json).
 
+Le backend utilise un client [`boto3`](requirements.txt), donc tu peux cibler:
+
+- **AWS S3**
+- **Cloudflare R2** (S3-compatible)
+
 ### Priorité de configuration (important)
 
 L'application charge d'abord les variables de [`.env`](.env), puis fusionne avec [`settings.json`](settings.json).
@@ -50,6 +55,15 @@ Pour éviter la confusion, recommandé :
 - garder les credentials/valeurs actives dans [`settings.json`](settings.json)
 - ne pas laisser `AWS_PROFILE=` vide dans [`.env`](.env)
 - définir `AWS_PROFILE` seulement si tu utilises réellement un profil nommé AWS
+
+### Variables d'auth supportées
+
+- `AWS_PROFILE`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_SESSION_TOKEN` (optionnel)
+
+L'app accepte soit un profil AWS, soit des clés directes.
 
 Fichier par défaut :
 
@@ -127,6 +141,18 @@ Aucun fichier de metadata externe, tout est dans la structure du S3 key.
 
 Utilise boto3 standard : `~/.aws/credentials`, variables d'env, ou IAM role.  
 Ou `AWS_PROFILE` dans `.env` pour un profil nommé.
+
+## Cloudflare R2
+
+R2 est compatible S3. Dans cette app, la partie authentification fonctionne avec les mêmes champs (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
+
+Points à noter:
+
+- `s3_bucket` = nom du bucket R2
+- `s3_prefix` = préfixe logique inchangé
+- pour R2, utilise tes credentials API R2 (access key / secret key) dans la config
+
+> Si tu utilises AWS S3 et R2 selon l'environnement, tu peux garder le même workflow UI et ne changer que les credentials + bucket.
 
 ⚠️ Évite `AWS_PROFILE=` vide dans [`.env`](.env), cela peut provoquer l'erreur
 `The config profile () could not be found`.
