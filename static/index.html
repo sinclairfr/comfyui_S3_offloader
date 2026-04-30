@@ -165,6 +165,23 @@
   .sort-btn { padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border2); background: transparent; color: var(--text3); font-family: var(--mono); font-size: 10px; cursor: pointer; transition: all .1s; white-space: nowrap; }
   .sort-btn:hover { color: var(--text); border-color: var(--text3); }
   .sort-btn.active { background: rgba(79,140,255,.1); border-color: var(--accent); color: var(--accent); }
+
+  /* Sync tab */
+  .sync-folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .sync-folder-card { background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; padding: 16px; }
+  .sync-folder-name { font-family: var(--sans); font-size: 14px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .sync-stat-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; }
+  .sync-stat-label { color: var(--text3); }
+  .sync-stat-value { font-weight: 500; color: var(--text2); }
+  .sync-pill { display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+  .sync-pill.local-only { background: rgba(79,140,255,.15); color: var(--accent); }
+  .sync-pill.s3-only { background: rgba(124,92,252,.15); color: var(--accent2); }
+  .sync-pill.in-sync { background: rgba(34,214,122,.15); color: var(--green); }
+  .sync-pill.diff { background: rgba(255,140,66,.15); color: var(--orange); }
+  .folder-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border2); background: transparent; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--text2); transition: all .1s; }
+  .folder-toggle.active { background: rgba(79,140,255,.12); border-color: var(--accent); color: var(--accent); }
+  .folder-toggle:hover:not(.active) { border-color: var(--text3); color: var(--text); }
+  .sync-info-box { padding: 12px 16px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; font-size: 11px; color: var(--text3); line-height: 1.7; }
 </style>
 </head>
 <body>
@@ -188,6 +205,7 @@
 <div class="tabs">
   <div class="tab active" data-tab="local">📁 Local Files</div>
   <div class="tab" data-tab="s3">☁️ On S3 <span id="s3-count-badge" style="display:none" class="badge">0</span></div>
+  <div class="tab" data-tab="sync">🔄 Sync</div>
   <div class="tab" data-tab="config">⚙️ Config</div>
   <div class="tab" data-tab="logs">📋 Logs</div>
 </div>
@@ -274,6 +292,52 @@
       <button class="btn btn-red btn-sm" id="delete-s3-btn" disabled onclick="confirmDeleteS3()">🗑 Delete from S3</button>
       <button class="btn btn-green" id="restore-btn" disabled onclick="startRestore()">↓ Restore</button>
       <button class="btn btn-red btn-sm" id="delete-s3-folder-btn" disabled onclick="confirmDeleteS3Folder()" style="display:none">🗑 Delete Folder</button>
+    </div>
+  </div>
+
+  <!-- SYNC TAB -->
+  <div id="tab-sync" class="panel" style="display:none;">
+    <div class="panel-content">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:16px;">
+        <div>
+          <div class="section-title">Sync Between Platforms</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.6;">
+            Push your workspace to S3, then pull it on another machine (RunPod ↔ VastAI ↔ local).
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" style="flex-shrink:0" onclick="loadSyncStatus()">↻ Refresh Status</button>
+      </div>
+
+      <!-- Inline sync config -->
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px;padding:14px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;">
+        <div class="config-field" style="flex:2;min-width:180px;">
+          <label>ComfyUI Base Path</label>
+          <input type="text" id="sync-cfg-base" placeholder="/workspace/ComfyUI" />
+        </div>
+        <div class="config-field" style="flex:1;min-width:130px;">
+          <label>Platform Name</label>
+          <input type="text" id="sync-cfg-platform" placeholder="runpod / vastai / local" />
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="saveSyncConfig()">Save</button>
+      </div>
+
+      <!-- Folder selection -->
+      <div style="margin-bottom:18px;">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">Folders to sync</div>
+        <div id="sync-folder-toggles" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+      </div>
+
+      <!-- Action buttons -->
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push to S3</button>
+        <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull from S3</button>
+        <span style="font-size:11px;color:var(--text3);">Smart skip: files with matching size are skipped automatically.</span>
+      </div>
+
+      <!-- Status cards -->
+      <div id="sync-status-content">
+        <div class="empty-state"><div class="icon">🔄</div><p>Click <strong>Refresh Status</strong> to compare local vs S3</p></div>
+      </div>
     </div>
   </div>
 
@@ -519,13 +583,14 @@ function parsePersonalPathsText(text) {
 let logPollInterval = null;
 
 function switchTab(name) {
-  ["local", "s3", "config", "logs"].forEach(t => {
+  ["local", "s3", "sync", "config", "logs"].forEach(t => {
     document.getElementById(`tab-${t}`).style.display = t === name ? "flex" : "none";
     document.querySelector(`[data-tab="${t}"]`).classList.toggle("active", t === name);
   });
   clearInterval(logPollInterval);
   if (name === "s3") refreshS3();
   if (name === "local") refreshTree();
+  if (name === "sync") { loadSyncConfig(); loadSyncStatus(); }
   if (name === "logs") {
     refreshLogs();
     logPollInterval = setInterval(refreshLogs, 3000);
@@ -1420,6 +1485,162 @@ function renderLogs(entries) {
 async function clearLogs() {
   await fetch("/api/logs", { method: "DELETE" });
   refreshLogs();
+}
+
+// --- Sync ---
+let syncFolders = ["input", "output", "user"];
+let activeSyncFolders = new Set(["input", "output", "user"]);
+
+function loadSyncConfig() {
+  if (config.comfyui_base) document.getElementById("sync-cfg-base").value = config.comfyui_base;
+  if (typeof config.platform_name === "string") document.getElementById("sync-cfg-platform").value = config.platform_name;
+  syncFolders = Array.isArray(config.sync_folders) && config.sync_folders.length
+    ? config.sync_folders
+    : ["input", "output", "user"];
+  // Keep active selection aligned: add any new folders, keep existing active state
+  syncFolders.forEach(f => { if (!activeSyncFolders.has(f)) activeSyncFolders.add(f); });
+  renderSyncFolderToggles();
+}
+
+function renderSyncFolderToggles() {
+  const c = document.getElementById("sync-folder-toggles");
+  if (!c) return;
+  c.innerHTML = "";
+  syncFolders.forEach(folder => {
+    const btn = document.createElement("button");
+    btn.className = "folder-toggle" + (activeSyncFolders.has(folder) ? " active" : "");
+    btn.textContent = "📁 " + folder;
+    btn.onclick = () => {
+      activeSyncFolders.has(folder) ? activeSyncFolders.delete(folder) : activeSyncFolders.add(folder);
+      renderSyncFolderToggles();
+    };
+    c.appendChild(btn);
+  });
+  // Add custom folder button
+  const addBtn = document.createElement("button");
+  addBtn.className = "folder-toggle";
+  addBtn.style.borderStyle = "dashed";
+  addBtn.textContent = "+ folder";
+  addBtn.onclick = () => {
+    const name = prompt("Folder name to sync (relative to ComfyUI base, e.g. \"input\"):");
+    if (!name || !name.trim()) return;
+    const f = name.trim();
+    if (!syncFolders.includes(f)) syncFolders.push(f);
+    activeSyncFolders.add(f);
+    renderSyncFolderToggles();
+  };
+  c.appendChild(addBtn);
+}
+
+async function saveSyncConfig() {
+  const base = document.getElementById("sync-cfg-base").value.trim();
+  const platform = document.getElementById("sync-cfg-platform").value.trim();
+  const r = await fetch("/api/config", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ comfyui_base: base, platform_name: platform, sync_folders: syncFolders })
+  });
+  if (r.ok) {
+    await loadConfig();
+    loadSyncConfig();
+    notify("Sync config saved", "success");
+  } else {
+    const e = await r.json().catch(() => ({}));
+    notify("Failed to save: " + (e.error || "error"), "error");
+  }
+}
+
+async function loadSyncStatus() {
+  const c = document.getElementById("sync-status-content");
+  if (!c) return;
+  c.innerHTML = `<div class="empty-state"><div class="icon">⏳</div><p>Checking sync status...</p></div>`;
+  const folders = Array.from(activeSyncFolders);
+  if (!folders.length) {
+    c.innerHTML = `<div class="empty-state"><div class="icon">📂</div><p>Select at least one folder to sync</p></div>`;
+    return;
+  }
+  const params = new URLSearchParams();
+  folders.forEach(f => params.append("folders", f));
+  try {
+    const r = await fetch("/api/sync/status?" + params.toString());
+    if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
+    const data = await r.json();
+    renderSyncStatus(data);
+  } catch (e) {
+    c.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${escapeHtml(e.message)}</p></div>`;
+  }
+}
+
+function renderSyncStatus(data) {
+  const c = document.getElementById("sync-status-content");
+  const folders = data.folders || {};
+  const keys = Object.keys(folders);
+  if (!keys.length) {
+    c.innerHTML = `<div class="empty-state"><div class="icon">📭</div><p>No sync folders found</p></div>`;
+    return;
+  }
+  c.innerHTML = "";
+
+  const grid = document.createElement("div");
+  grid.className = "sync-folder-grid";
+
+  keys.forEach(folder => {
+    const s = folders[folder];
+    const needsAction = s.local_only_count + s.s3_only_count + s.different_count;
+    const card = document.createElement("div");
+    card.className = "sync-folder-card";
+    const statusPill = needsAction > 0
+      ? `<span class="sync-pill diff" style="margin-left:auto">${needsAction} to sync</span>`
+      : s.local_count === 0 && s.s3_count === 0
+        ? `<span class="sync-pill" style="margin-left:auto;color:var(--text3);">empty</span>`
+        : `<span class="sync-pill in-sync" style="margin-left:auto">✓ in sync</span>`;
+    const pills = [
+      s.local_only_count > 0 ? `<span class="sync-pill local-only">⬆ ${s.local_only_count} local only</span>` : "",
+      s.s3_only_count > 0 ? `<span class="sync-pill s3-only">⬇ ${s.s3_only_count} S3 only</span>` : "",
+      s.in_sync_count > 0 ? `<span class="sync-pill in-sync">✓ ${s.in_sync_count} in sync</span>` : "",
+      s.different_count > 0 ? `<span class="sync-pill diff">⚡ ${s.different_count} differ</span>` : "",
+    ].filter(Boolean).join("");
+    card.innerHTML = `
+      <div class="sync-folder-name">
+        ${s.exists ? "📁" : '<span title="Folder missing locally" style="opacity:.6">⚠️</span>'} ${escapeHtml(folder)}/
+        ${statusPill}
+      </div>
+      <div class="sync-stat-row"><span class="sync-stat-label">Local</span><span class="sync-stat-value">${s.local_count} files &nbsp;(${fmtSize(s.local_size)})</span></div>
+      <div class="sync-stat-row"><span class="sync-stat-label">S3</span><span class="sync-stat-value">${s.s3_count} files &nbsp;(${fmtSize(s.s3_size)})</span></div>
+      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:5px;">${pills || '<span style="font-size:11px;color:var(--text3)">No files</span>'}</div>
+    `;
+    grid.appendChild(card);
+  });
+  c.appendChild(grid);
+
+  const infoBox = document.createElement("div");
+  infoBox.className = "sync-info-box";
+  infoBox.innerHTML = `S3 sync prefix: <code style="color:var(--accent)">${escapeHtml(data.sync_s3_prefix)}</code>` +
+    (data.platform_name ? ` &nbsp;·&nbsp; Platform: <code style="color:var(--accent)">${escapeHtml(data.platform_name)}</code>` : "");
+  c.appendChild(infoBox);
+}
+
+async function startSyncPush() {
+  const folders = Array.from(activeSyncFolders);
+  if (!folders.length) { notify("No folders selected", "error"); return; }
+  const jobId = "sync_push_" + Date.now();
+  const r = await fetch("/api/sync/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folders, job_id: jobId })
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Failed: " + (e.error || "error"), "error"); return; }
+  trackJob(jobId, `Pushing ${folders.join(", ")} to S3`, () => loadSyncStatus());
+}
+
+async function startSyncPull() {
+  const folders = Array.from(activeSyncFolders);
+  if (!folders.length) { notify("No folders selected", "error"); return; }
+  const jobId = "sync_pull_" + Date.now();
+  const r = await fetch("/api/sync/pull", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folders, job_id: jobId })
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Failed: " + (e.error || "error"), "error"); return; }
+  trackJob(jobId, `Pulling ${folders.join(", ")} from S3`, () => loadSyncStatus());
 }
 
 // --- Utils ---
