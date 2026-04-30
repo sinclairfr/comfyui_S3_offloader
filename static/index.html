@@ -301,42 +301,55 @@
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:16px;">
         <div>
           <div class="section-title">Sync Between Platforms</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.6;">
-            Push your workspace to S3, then pull it on another machine (RunPod ↔ VastAI ↔ local).
+          <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.7;">
+            Un seul utilisateur, quel que soit la plateforme. Push depuis RunPod → Pull sur VastAI (ou l'inverse).<br>
+            Les fichiers sont indexés par chemin relatif depuis la base ComfyUI — la plateforme n'a aucune importance.
           </div>
         </div>
-        <button class="btn btn-secondary btn-sm" style="flex-shrink:0" onclick="loadSyncStatus()">↻ Refresh Status</button>
+        <button class="btn btn-secondary btn-sm" style="flex-shrink:0" onclick="loadSyncStatus()">↻ Status</button>
       </div>
 
       <!-- Inline sync config -->
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px;padding:14px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;padding:14px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;">
         <div class="config-field" style="flex:2;min-width:180px;">
           <label>ComfyUI Base Path</label>
           <input type="text" id="sync-cfg-base" placeholder="/workspace/ComfyUI" />
         </div>
-        <div class="config-field" style="flex:1;min-width:130px;">
-          <label>Platform Name</label>
-          <input type="text" id="sync-cfg-platform" placeholder="runpod / vastai / local" />
+        <div class="config-field" style="flex:1;min-width:120px;">
+          <label>Username ComfyUI</label>
+          <input type="text" id="sync-cfg-username" placeholder="default" title="Sous-dossier dans user/ — généralement 'default'" />
+        </div>
+        <div class="config-field" style="flex:1;min-width:110px;">
+          <label>Plateforme (label)</label>
+          <input type="text" id="sync-cfg-platform" placeholder="runpod / vastai" />
         </div>
         <button class="btn btn-secondary btn-sm" onclick="saveSyncConfig()">Save</button>
       </div>
 
+      <!-- Identity callout -->
+      <div id="sync-identity-note" style="display:none;margin-bottom:16px;padding:10px 14px;background:rgba(79,140,255,.08);border:1px solid rgba(79,140,255,.2);border-radius:6px;font-size:11px;color:var(--text2);line-height:1.7;"></div>
+
       <!-- Folder selection -->
       <div style="margin-bottom:18px;">
-        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">Folders to sync</div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">Dossiers à synchroniser</div>
         <div id="sync-folder-toggles" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+        <div style="margin-top:8px;font-size:11px;color:var(--text3);line-height:1.7;">
+          <code style="color:var(--accent)">input/</code> images importées &nbsp;·&nbsp;
+          <code style="color:var(--accent)">output/</code> images générées &nbsp;·&nbsp;
+          <code style="color:var(--accent)">user/</code> workflows, paramètres ComfyUI, historique
+        </div>
       </div>
 
       <!-- Action buttons -->
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
-        <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push to S3</button>
-        <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull from S3</button>
-        <span style="font-size:11px;color:var(--text3);">Smart skip: files with matching size are skipped automatically.</span>
+        <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push vers S3/R2</button>
+        <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull depuis S3/R2</button>
+        <span style="font-size:11px;color:var(--text3);">Les fichiers déjà identiques (même taille) sont ignorés automatiquement.</span>
       </div>
 
       <!-- Status cards -->
       <div id="sync-status-content">
-        <div class="empty-state"><div class="icon">🔄</div><p>Click <strong>Refresh Status</strong> to compare local vs S3</p></div>
+        <div class="empty-state"><div class="icon">🔄</div><p>Cliquer <strong>Status</strong> pour comparer local vs S3/R2</p></div>
       </div>
     </div>
   </div>
@@ -367,15 +380,23 @@
           <input type="text" id="cfg-root" placeholder="~/ComfyUI/models" />
         </div>
         <div class="config-field">
-          <label>S3 Bucket</label>
+          <label>Bucket (S3 or R2)</label>
           <input type="text" id="cfg-bucket" placeholder="my-models-bucket" />
         </div>
         <div class="config-field">
-          <label>S3 Prefix</label>
+          <label>Prefix</label>
           <input type="text" id="cfg-prefix" placeholder="models-offload/" />
         </div>
+        <div class="config-field" style="grid-column:1/-1">
+          <label>Custom Endpoint URL — leave empty for AWS S3, set for Cloudflare R2 or other S3-compatible stores</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" id="cfg-endpoint" placeholder="https://<account_id>.r2.cloudflarestorage.com" style="flex:1" />
+            <button class="btn btn-secondary btn-sm" onclick="prefillR2Endpoint()" title="Pre-fill Cloudflare R2 endpoint format">R2 helper</button>
+          </div>
+          <div class="config-help">For Cloudflare R2: use your account token as <code style="color:var(--accent)">AWS_ACCESS_KEY_ID</code> / <code style="color:var(--accent)">AWS_SECRET_ACCESS_KEY</code> — no AWS profile needed.</div>
+        </div>
         <div class="config-field">
-          <label>AWS Profile (optional)</label>
+          <label>AWS Profile (optional, S3 only)</label>
           <input type="text" id="cfg-profile" placeholder="default" />
         </div>
 
@@ -490,10 +511,21 @@ async function loadConfig() {
   document.getElementById("cfg-root").value = config.models_root;
   document.getElementById("cfg-bucket").value = config.s3_bucket;
   document.getElementById("cfg-prefix").value = config.s3_prefix;
+  document.getElementById("cfg-endpoint").value = config.s3_endpoint_url || "";
   document.getElementById("cfg-profile").value = config.aws_profile || "";
   document.getElementById("cfg-include-personal").checked = !!config.include_personal_stuff;
   document.getElementById("cfg-personal-paths-text").value = (Array.isArray(config.personal_paths) ? config.personal_paths : []).join("\n");
-  document.getElementById("bucket-display").textContent = config.s3_bucket ? `🪣 ${config.s3_bucket}` : "No bucket set";
+  const isR2 = !!(config.s3_endpoint_url || "").includes("r2.cloudflarestorage.com");
+  const bucketLabel = config.s3_bucket
+    ? (isR2 ? `☁ R2: ${config.s3_bucket}` : `🪣 S3: ${config.s3_bucket}`)
+    : "No bucket set";
+  document.getElementById("bucket-display").textContent = bucketLabel;
+}
+
+function prefillR2Endpoint() {
+  const id = prompt("Your Cloudflare Account ID (found in R2 dashboard):");
+  if (!id || !id.trim()) return;
+  document.getElementById("cfg-endpoint").value = `https://${id.trim()}.r2.cloudflarestorage.com`;
 }
 
 async function saveConfig() {
@@ -504,6 +536,7 @@ async function saveConfig() {
       models_root: document.getElementById("cfg-root").value,
       s3_bucket: document.getElementById("cfg-bucket").value,
       s3_prefix: document.getElementById("cfg-prefix").value,
+      s3_endpoint_url: document.getElementById("cfg-endpoint").value,
       aws_profile: document.getElementById("cfg-profile").value,
       include_personal_stuff: document.getElementById("cfg-include-personal").checked,
       personal_paths: personalPaths,
@@ -1494,12 +1527,28 @@ let activeSyncFolders = new Set(["input", "output", "user"]);
 function loadSyncConfig() {
   if (config.comfyui_base) document.getElementById("sync-cfg-base").value = config.comfyui_base;
   if (typeof config.platform_name === "string") document.getElementById("sync-cfg-platform").value = config.platform_name;
+  const usernameEl = document.getElementById("sync-cfg-username");
+  if (usernameEl) usernameEl.value = config.comfyui_username || "default";
   syncFolders = Array.isArray(config.sync_folders) && config.sync_folders.length
     ? config.sync_folders
     : ["input", "output", "user"];
-  // Keep active selection aligned: add any new folders, keep existing active state
   syncFolders.forEach(f => { if (!activeSyncFolders.has(f)) activeSyncFolders.add(f); });
   renderSyncFolderToggles();
+  _updateIdentityNote();
+}
+
+function _updateIdentityNote() {
+  const note = document.getElementById("sync-identity-note");
+  if (!note) return;
+  const base = (config.comfyui_base || "").replace(/\/$/, "");
+  const username = config.comfyui_username || "default";
+  if (!base) { note.style.display = "none"; return; }
+  note.style.display = "block";
+  note.innerHTML = `
+    Identité unique : <code style="color:var(--accent)">${escapeHtml(base)}/user/<strong>${escapeHtml(username)}</strong>/workflows/</code> est synchronisé comme
+    <code style="color:var(--accent2)">sync/user/${escapeHtml(username)}/workflows/</code> sur S3/R2.<br>
+    Configurez le même <strong>Username</strong> et le même <strong>Base Path</strong> sur chaque plateforme → vos workflows sont identiques partout.
+  `;
 }
 
 function renderSyncFolderToggles() {
@@ -1535,17 +1584,18 @@ function renderSyncFolderToggles() {
 async function saveSyncConfig() {
   const base = document.getElementById("sync-cfg-base").value.trim();
   const platform = document.getElementById("sync-cfg-platform").value.trim();
+  const username = (document.getElementById("sync-cfg-username").value || "default").trim() || "default";
   const r = await fetch("/api/config", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ comfyui_base: base, platform_name: platform, sync_folders: syncFolders })
+    body: JSON.stringify({ comfyui_base: base, platform_name: platform, comfyui_username: username, sync_folders: syncFolders })
   });
   if (r.ok) {
     await loadConfig();
     loadSyncConfig();
-    notify("Sync config saved", "success");
+    notify("Config sync sauvegardée", "success");
   } else {
     const e = await r.json().catch(() => ({}));
-    notify("Failed to save: " + (e.error || "error"), "error");
+    notify("Erreur : " + (e.error || "error"), "error");
   }
 }
 
@@ -1612,10 +1662,14 @@ function renderSyncStatus(data) {
   });
   c.appendChild(grid);
 
+  const isR2 = !!(config.s3_endpoint_url || "").includes("r2.cloudflarestorage");
+  const storageLabel = isR2 ? "R2" : "S3";
   const infoBox = document.createElement("div");
   infoBox.className = "sync-info-box";
-  infoBox.innerHTML = `S3 sync prefix: <code style="color:var(--accent)">${escapeHtml(data.sync_s3_prefix)}</code>` +
-    (data.platform_name ? ` &nbsp;·&nbsp; Platform: <code style="color:var(--accent)">${escapeHtml(data.platform_name)}</code>` : "");
+  infoBox.innerHTML =
+    `${storageLabel} sync prefix: <code style="color:var(--accent)">${escapeHtml(data.sync_s3_prefix)}</code>` +
+    (data.platform_name ? ` &nbsp;·&nbsp; Plateforme actuelle: <code style="color:var(--accent)">${escapeHtml(data.platform_name)}</code>` : "") +
+    (data.comfyui_username ? ` &nbsp;·&nbsp; Username: <code style="color:var(--accent)">${escapeHtml(data.comfyui_username || "default")}</code>` : "");
   c.appendChild(infoBox);
 }
 

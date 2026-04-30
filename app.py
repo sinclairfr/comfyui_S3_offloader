@@ -55,6 +55,7 @@ def _default_settings() -> dict:
         "models_root": os.getenv("MODELS_ROOT", "~/models"),
         "s3_bucket": os.getenv("S3_BUCKET", ""),
         "s3_prefix": os.getenv("S3_PREFIX", "models-offload/"),
+        "s3_endpoint_url": os.getenv("S3_ENDPOINT_URL", ""),
         "aws_profile": os.getenv("AWS_PROFILE", None),
         "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID", None),
         "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY", None),
@@ -64,6 +65,7 @@ def _default_settings() -> dict:
             os.getenv("PERSONAL_PATHS", ",".join(DEFAULT_PERSONAL_PATHS))
         ),
         "comfyui_base": os.getenv("COMFYUI_BASE", "/workspace/ComfyUI"),
+        "comfyui_username": os.getenv("COMFYUI_USERNAME", "default"),
         "sync_folders": ["input", "output", "user"],
         "platform_name": os.getenv("PLATFORM_NAME", ""),
     }
@@ -76,6 +78,7 @@ def _normalize_settings(raw: dict) -> dict:
     )
     merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
     merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
+    merged["s3_endpoint_url"] = str(merged.get("s3_endpoint_url") or "").strip()
     merged["aws_profile"] = str(merged.get("aws_profile") or "").strip() or None
     merged["aws_access_key_id"] = (
         str(merged.get("aws_access_key_id") or "").strip() or None
@@ -95,6 +98,7 @@ def _normalize_settings(raw: dict) -> dict:
     merged["comfyui_base"] = os.path.expanduser(
         str(merged.get("comfyui_base") or "/workspace/ComfyUI")
     )
+    merged["comfyui_username"] = str(merged.get("comfyui_username") or "default").strip() or "default"
     merged["sync_folders"] = [
         str(f).strip()
         for f in (merged.get("sync_folders") or ["input", "output", "user"])
@@ -160,6 +164,7 @@ _SETTINGS = load_settings()
 MODELS_ROOT = _SETTINGS["models_root"]
 S3_BUCKET = _SETTINGS["s3_bucket"]
 S3_PREFIX = _SETTINGS["s3_prefix"]
+S3_ENDPOINT_URL = _SETTINGS["s3_endpoint_url"]
 AWS_PROFILE = _SETTINGS["aws_profile"]
 AWS_ACCESS_KEY_ID = _SETTINGS["aws_access_key_id"]
 AWS_SECRET_ACCESS_KEY = _SETTINGS["aws_secret_access_key"]
@@ -167,6 +172,7 @@ AWS_SESSION_TOKEN = _SETTINGS["aws_session_token"]
 INCLUDE_PERSONAL_STUFF = _SETTINGS["include_personal_stuff"]
 PERSONAL_PATHS = _SETTINGS["personal_paths"]
 COMFYUI_BASE = _SETTINGS["comfyui_base"]
+COMFYUI_USERNAME = _SETTINGS["comfyui_username"]
 SYNC_FOLDERS = _SETTINGS["sync_folders"]
 PLATFORM_NAME = _SETTINGS["platform_name"]
 SCAN_EXCLUDE_DIRS = set(
@@ -229,6 +235,7 @@ def get_s3_client():
     secret_key = str(AWS_SECRET_ACCESS_KEY or "").strip()
     session_token = str(AWS_SESSION_TOKEN or "").strip() or None
     profile = str(AWS_PROFILE or "").strip() or None
+    endpoint_url = str(S3_ENDPOINT_URL or "").strip() or None
 
     # Guard against empty profile env vars (e.g. AWS_PROFILE="") which
     # botocore treats as an explicit (invalid) profile name.
@@ -247,7 +254,12 @@ def get_s3_client():
             session = boto3.Session(profile_name=profile)
         else:
             session = boto3.Session()
-    return session.client("s3")
+
+    client_kwargs = {"endpoint_url": endpoint_url} if endpoint_url else {}
+    # Cloudflare R2 and some S3-compatible stores require path-style addressing
+    if endpoint_url:
+        client_kwargs["config"] = boto3.session.Config(s3={"addressing_style": "path"})
+    return session.client("s3", **client_kwargs)
 
 
 def is_model_file(path: Path) -> bool:
@@ -570,6 +582,7 @@ def get_config():
             "models_root": MODELS_ROOT,
             "s3_bucket": S3_BUCKET,
             "s3_prefix": S3_PREFIX,
+            "s3_endpoint_url": S3_ENDPOINT_URL or "",
             "aws_profile": AWS_PROFILE or "",
             "aws_access_key_id": AWS_ACCESS_KEY_ID or "",
             "aws_secret_access_key": AWS_SECRET_ACCESS_KEY or "",
@@ -577,6 +590,7 @@ def get_config():
             "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
             "personal_paths": PERSONAL_PATHS,
             "comfyui_base": COMFYUI_BASE,
+            "comfyui_username": COMFYUI_USERNAME,
             "sync_folders": SYNC_FOLDERS,
             "platform_name": PLATFORM_NAME,
         }
@@ -585,7 +599,7 @@ def get_config():
 
 @app.route("/api/config", methods=["POST"])
 def update_config():
-    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS, COMFYUI_BASE, SYNC_FOLDERS, PLATFORM_NAME
+    global MODELS_ROOT, S3_BUCKET, S3_PREFIX, S3_ENDPOINT_URL, AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, INCLUDE_PERSONAL_STUFF, PERSONAL_PATHS, COMFYUI_BASE, COMFYUI_USERNAME, SYNC_FOLDERS, PLATFORM_NAME
     d = request.json or {}
     if "models_root" in d:
         MODELS_ROOT = os.path.expanduser(d["models_root"])
@@ -593,6 +607,8 @@ def update_config():
         S3_BUCKET = d["s3_bucket"]
     if "s3_prefix" in d:
         S3_PREFIX = d["s3_prefix"]
+    if "s3_endpoint_url" in d:
+        S3_ENDPOINT_URL = str(d["s3_endpoint_url"] or "").strip()
     if "aws_profile" in d:
         AWS_PROFILE = str(d["aws_profile"] or "").strip() or None
     if "aws_access_key_id" in d:
@@ -611,6 +627,8 @@ def update_config():
         ]
     if "comfyui_base" in d:
         COMFYUI_BASE = os.path.expanduser(str(d["comfyui_base"] or "/workspace/ComfyUI"))
+    if "comfyui_username" in d:
+        COMFYUI_USERNAME = str(d["comfyui_username"] or "default").strip() or "default"
     if "sync_folders" in d:
         SYNC_FOLDERS = [str(f).strip() for f in d["sync_folders"] if str(f).strip()]
     if "platform_name" in d:
@@ -621,6 +639,7 @@ def update_config():
                 "models_root": MODELS_ROOT,
                 "s3_bucket": S3_BUCKET,
                 "s3_prefix": S3_PREFIX,
+                "s3_endpoint_url": S3_ENDPOINT_URL,
                 "aws_profile": AWS_PROFILE,
                 "aws_access_key_id": AWS_ACCESS_KEY_ID,
                 "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
@@ -628,6 +647,7 @@ def update_config():
                 "include_personal_stuff": INCLUDE_PERSONAL_STUFF,
                 "personal_paths": PERSONAL_PATHS,
                 "comfyui_base": COMFYUI_BASE,
+                "comfyui_username": COMFYUI_USERNAME,
                 "sync_folders": SYNC_FOLDERS,
                 "platform_name": PLATFORM_NAME,
             }
@@ -1029,6 +1049,7 @@ def sync_status():
     return jsonify({
         "folders": folder_stats,
         "comfyui_base": COMFYUI_BASE,
+        "comfyui_username": COMFYUI_USERNAME,
         "sync_s3_prefix": _get_sync_s3_prefix(),
         "platform_name": PLATFORM_NAME,
     })
