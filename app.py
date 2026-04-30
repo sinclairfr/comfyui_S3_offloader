@@ -401,7 +401,9 @@ def build_files_tree(path: Path, rel_root: Path, s3_keys: set, file_filter):
             for child in sorted(
                 path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())
             ):
-                if child.is_symlink():
+                # Keep symlinked files (common in ComfyUI model setups),
+                # but skip symlinked directories to avoid recursion issues.
+                if child.is_symlink() and child.is_dir():
                     continue
                 if child.is_dir() or file_filter(child):
                     if child.is_dir() and child.name.lower() in SCAN_EXCLUDE_DIRS:
