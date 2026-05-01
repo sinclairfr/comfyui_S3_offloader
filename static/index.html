@@ -342,9 +342,9 @@
 
       <!-- Action buttons -->
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
-        <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push vers S3/R2</button>
-        <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull depuis S3/R2</button>
-        <span style="font-size:11px;color:var(--text3);">Les fichiers déjà identiques (même taille) sont ignorés automatiquement.</span>
+        <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push sélection</button>
+        <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull sélection</button>
+        <span style="font-size:11px;color:var(--text3);">Choisis exactement les dossiers à synchroniser (input / output / user / custom). Les fichiers déjà identiques sont ignorés.</span>
       </div>
 
       <!-- Status cards -->
@@ -1685,6 +1685,17 @@ async function startSyncPush() {
   trackJob(jobId, `Pushing ${folders.join(", ")} to S3`, () => loadSyncStatus());
 }
 
+async function startSyncPushSingle(folder) {
+  if (!folder) return;
+  const jobId = "sync_push_" + Date.now();
+  const r = await fetch("/api/sync/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folders: [folder], job_id: jobId })
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Failed: " + (e.error || "error"), "error"); return; }
+  trackJob(jobId, `Pushing ${folder} to S3`, () => loadSyncStatus());
+}
+
 async function startSyncPull() {
   const folders = Array.from(activeSyncFolders);
   if (!folders.length) { notify("No folders selected", "error"); return; }
@@ -1695,6 +1706,17 @@ async function startSyncPull() {
   });
   if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Failed: " + (e.error || "error"), "error"); return; }
   trackJob(jobId, `Pulling ${folders.join(", ")} from S3`, () => loadSyncStatus());
+}
+
+async function startSyncPullSingle(folder) {
+  if (!folder) return;
+  const jobId = "sync_pull_" + Date.now();
+  const r = await fetch("/api/sync/pull", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folders: [folder], job_id: jobId })
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Failed: " + (e.error || "error"), "error"); return; }
+  trackJob(jobId, `Pulling ${folder} from S3`, () => loadSyncStatus());
 }
 
 // --- Utils ---
