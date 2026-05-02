@@ -29,6 +29,7 @@
 
   .header { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; height: 52px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
   .header-title { font-family: var(--sans); font-weight: 800; font-size: 16px; letter-spacing: -0.5px; display: flex; align-items: center; gap: 10px; }
+  .version-pill { font-family: var(--mono); font-size: 10px; color: var(--text2); border: 1px solid var(--border2); background: var(--surface2); border-radius: 999px; padding: 2px 8px; line-height: 1.6; }
   .logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
@@ -190,6 +191,7 @@
   <div class="header-title">
     <div class="logo-dot"></div>
     S3 Offloader
+    <span id="app-version" class="version-pill">v—</span>
   </div>
   <span id="bucket-display" style="font-size:11px;color:var(--text3)">Loading...</span>
 </div>
@@ -342,6 +344,7 @@
 
       <!-- Action buttons -->
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
+        <button class="btn btn-secondary" onclick="saveComfySnapshotOnly()">📸 Save Snapshot</button>
         <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push sélection</button>
         <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull sélection</button>
         <span style="font-size:11px;color:var(--text3);">Choisis exactement les dossiers à synchroniser (input / output / user / custom). Les fichiers déjà identiques sont ignorés.</span>
@@ -508,6 +511,7 @@ function setupS3Controls() {
 async function loadConfig() {
   const r = await fetch("/api/config");
   config = await r.json();
+  document.getElementById("app-version").textContent = `v${config.app_version || "dev"}`;
   document.getElementById("cfg-root").value = config.models_root;
   document.getElementById("cfg-bucket").value = config.s3_bucket;
   document.getElementById("cfg-prefix").value = config.s3_prefix;
@@ -1694,6 +1698,19 @@ async function startSyncPushSingle(folder) {
   });
   if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Failed: " + (e.error || "error"), "error"); return; }
   trackJob(jobId, `Pushing ${folder} to S3`, () => loadSyncStatus());
+}
+
+async function saveComfySnapshotOnly() {
+  const r = await fetch("/api/sync/snapshot/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    notify("Snapshot failed: " + (e.error || "error"), "error");
+    return;
+  }
+  notify("ComfyUI snapshot saved", "success");
 }
 
 async function startSyncPull() {

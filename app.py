@@ -35,6 +35,7 @@ args = parser.parse_args()
 app = Flask(__name__, static_folder="static")
 
 # --- Config ---
+APP_VERSION = "0.2.0"
 MODEL_EXTENSIONS = {
     ".safetensors",
     ".ckpt",
@@ -598,6 +599,7 @@ def get_disk():
 def get_config():
     return jsonify(
         {
+            "app_version": APP_VERSION,
             "models_root": MODELS_ROOT,
             "s3_bucket": S3_BUCKET,
             "s3_prefix": S3_PREFIX,
@@ -1067,6 +1069,42 @@ def _run_comfyui_manager_snapshot() -> tuple[bool, str]:
     return True, output or "Snapshot created"
 
 
+def _run_comfyui_manager_restore_snapshot() -> tuple[bool, str]:
+    """Restore ComfyUI-Manager snapshot."""
+    comfy_path = Path(COMFYUI_BASE)
+    cm_cli = comfy_path / "custom_nodes" / "ComfyUI-Manager" / "cm-cli.py"
+
+    if not comfy_path.exists():
+        return False, f"ComfyUI base not found: {comfy_path}"
+    if not cm_cli.exists():
+        return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
+
+    env = os.environ.copy()
+    env["COMFYUI_PATH"] = str(comfy_path)
+
+    cmd = [sys.executable, str(cm_cli), "restore-snapshot"]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(comfy_path),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except Exception as e:
+        return False, str(e)
+
+    output = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+
+    if proc.returncode != 0:
+        details = err or output or f"exit code {proc.returncode}"
+        return False, details
+
+    return True, output or "Snapshot restored"
+
+
 # --- Sync endpoints ---
 
 
@@ -1133,7 +1171,7 @@ def sync_push():
     folders = data.get("folders") or SYNC_FOLDERS
     job_id = data.get("job_id", f"sync_push_{int(time.time())}")
     force = bool(data.get("force", False))
-    create_snapshot = bool(data.get("create_snapshot", True))
+    create_snapshot = bool(data.get("create_snapshot", False))
 
     if not S3_BUCKET:
         return jsonify({"error": "No S3 bucket configured"}), 400
@@ -1316,10 +1354,32 @@ def sync_pull():
             "info",
             f"Sync pull done — {job['done_files'] - errs - skipped} downloaded, {skipped} skipped, {errs} errors",
         )
+
+        restore_ok, restore_msg = _run_comfyui_manager_restore_snapshot()
+        if restore_ok:
+            add_log(
+                "success", f"ComfyUI snapshot restored after sync pull: {restore_msg}"
+            )
+        else:
+            add_log(
+                "warning",
+                f"ComfyUI snapshot restore failed after sync pull: {restore_msg}",
+            )
+
         job["finished"] = True
 
     threading.Thread(target=do_pull, daemon=True).start()
     return jsonify({"job_id": job_id})
+
+
+@app.route("/api/sync/snapshot/save", methods=["POST"])
+def sync_snapshot_save():
+    ok, msg = _run_comfyui_manager_snapshot()
+    if ok:
+        add_log("success", f"ComfyUI snapshot saved: {msg}")
+        return jsonify({"status": "ok", "message": msg})
+    add_log("error", f"ComfyUI snapshot save failed: {msg}")
+    return jsonify({"error": msg}), 500
 
 
 # --- Delete from S3 ---
