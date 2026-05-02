@@ -1069,8 +1069,10 @@ def _run_comfyui_manager_snapshot() -> tuple[bool, str]:
     return True, output or "Snapshot created"
 
 
-def _run_comfyui_manager_restore_snapshot() -> tuple[bool, str]:
-    """Restore ComfyUI-Manager snapshot."""
+def _run_comfyui_manager_restore_snapshot(
+    snapshot_file: str | None = None,
+) -> tuple[bool, str]:
+    """Restore ComfyUI-Manager snapshot (latest or selected file)."""
     comfy_path = Path(COMFYUI_BASE)
     cm_cli = comfy_path / "custom_nodes" / "ComfyUI-Manager" / "cm-cli.py"
 
@@ -1083,6 +1085,8 @@ def _run_comfyui_manager_restore_snapshot() -> tuple[bool, str]:
     env["COMFYUI_PATH"] = str(comfy_path)
 
     cmd = [sys.executable, str(cm_cli), "restore-snapshot"]
+    if snapshot_file:
+        cmd.append(snapshot_file)
     try:
         proc = subprocess.run(
             cmd,
@@ -1103,6 +1107,57 @@ def _run_comfyui_manager_restore_snapshot() -> tuple[bool, str]:
         return False, details
 
     return True, output or "Snapshot restored"
+
+
+def _snapshot_candidates_dirs() -> list[Path]:
+    base = Path(COMFYUI_BASE)
+    username = str(COMFYUI_USERNAME or "default").strip() or "default"
+    return [
+        base / "user" / username / "default" / "ComfyUI-Manager" / "snapshots",
+        base / "user" / username / "ComfyUI-Manager" / "snapshots",
+        base / "user" / "default" / "ComfyUI-Manager" / "snapshots",
+        base / "user" / "ComfyUI-Manager" / "snapshots",
+        base / "ComfyUI-Manager" / "snapshots",
+    ]
+
+
+def _list_comfyui_snapshots() -> tuple[list[dict], list[str]]:
+    snapshots = []
+    seen = set()
+    searched_dirs = []
+
+    for d in _snapshot_candidates_dirs():
+        d = d.resolve()
+        if str(d) in seen:
+            continue
+        seen.add(str(d))
+        searched_dirs.append(str(d))
+        if not d.exists() or not d.is_dir():
+            continue
+        try:
+            for p in sorted(d.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+                if not p.is_file():
+                    continue
+                if p.suffix.lower() not in {".json", ".snapshot", ".txt"}:
+                    continue
+                st = p.stat()
+                snapshots.append(
+                    {
+                        "name": p.name,
+                        "path": str(p),
+                        "size": st.st_size,
+                        "mtime": st.st_mtime,
+                        "mtime_iso": datetime.datetime.fromtimestamp(
+                            st.st_mtime
+                        ).isoformat(),
+                        "dir": str(d),
+                    }
+                )
+        except Exception:
+            continue
+
+    snapshots.sort(key=lambda s: s["mtime"], reverse=True)
+    return snapshots, searched_dirs
 
 
 # --- Sync endpoints ---
@@ -1380,6 +1435,44 @@ def sync_snapshot_save():
         return jsonify({"status": "ok", "message": msg})
     add_log("error", f"ComfyUI snapshot save failed: {msg}")
     return jsonify({"error": msg}), 500
+
+
+@app.route("/api/sync/snapshot/list")
+def sync_snapshot_list():
+    snapshots, searched_dirs = _list_comfyui_snapshots()
+    return jsonify(
+        {
+            "snapshots": snapshots,
+            "searched_dirs": searched_dirs,
+            "comfyui_base": COMFYUI_BASE,
+            "comfyui_username": COMFYUI_USERNAME,
+        }
+    )
+
+
+@app.route("/api/sync/snapshot/restore", methods=["POST"])
+def sync_snapshot_restore():
+    data = request.json or {}
+    snapshot_path = str(data.get("snapshot_path") or "").strip()
+    if not snapshot_path:
+        return jsonify({"error": "snapshot_path is required"}), 400
+
+    snapshots, _ = _list_comfyui_snapshots()
+    allowed = {str(Path(s["path"]).resolve()) for s in snapshots}
+    target = str(Path(snapshot_path).resolve())
+    if target not in allowed:
+        return (
+            jsonify({"error": "Snapshot not found in known snapshot directories"}),
+            404,
+        )
+
+    ok, msg = _run_comfyui_manager_restore_snapshot(snapshot_file=target)
+    if ok:
+        add_log("success", f"ComfyUI snapshot restored: {Path(target).name} — {msg}")
+        return jsonify({"status": "ok", "message": msg, "snapshot_path": target})
+
+    add_log("error", f"ComfyUI snapshot restore failed ({Path(target).name}): {msg}")
+    return jsonify({"error": msg, "snapshot_path": target}), 500
 
 
 # --- Delete from S3 ---

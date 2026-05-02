@@ -345,6 +345,7 @@
       <!-- Action buttons -->
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
         <button class="btn btn-secondary" onclick="saveComfySnapshotOnly()">📸 Save Snapshot</button>
+        <button class="btn btn-secondary" onclick="listSnapshotsAndRestore()">🗂 Restore Snapshot…</button>
         <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push sélection</button>
         <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull sélection</button>
         <span style="font-size:11px;color:var(--text3);">Choisis exactement les dossiers à synchroniser (input / output / user / custom). Les fichiers déjà identiques sont ignorés.</span>
@@ -1711,6 +1712,57 @@ async function saveComfySnapshotOnly() {
     return;
   }
   notify("ComfyUI snapshot saved", "success");
+}
+
+async function listSnapshotsAndRestore() {
+  const r = await fetch("/api/sync/snapshot/list");
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    notify("Snapshot list failed: " + (e.error || "error"), "error");
+    return;
+  }
+
+  const data = await r.json();
+  const snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+  if (!snapshots.length) {
+    notify("No snapshot found", "error");
+    return;
+  }
+
+  const options = snapshots
+    .slice(0, 20)
+    .map((s, i) => `${i + 1}. ${s.name} (${fmtSize(s.size)} · ${new Date(s.mtime_iso).toLocaleString()})`)
+    .join("\n");
+
+  const picked = prompt(
+    "Choose snapshot number to restore:\n\n" +
+    options +
+    "\n\nEnter a number (1-" + Math.min(snapshots.length, 20) + ")"
+  );
+  if (!picked) return;
+
+  const idx = Number.parseInt(picked.trim(), 10);
+  if (!Number.isInteger(idx) || idx < 1 || idx > Math.min(snapshots.length, 20)) {
+    notify("Invalid snapshot number", "error");
+    return;
+  }
+
+  const selected = snapshots[idx - 1];
+  const confirmMsg = `Restore snapshot ${selected.name}?`;
+  if (!confirm(confirmMsg)) return;
+
+  const rr = await fetch("/api/sync/snapshot/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ snapshot_path: selected.path })
+  });
+  if (!rr.ok) {
+    const e = await rr.json().catch(() => ({}));
+    notify("Snapshot restore failed: " + (e.error || "error"), "error");
+    return;
+  }
+
+  notify(`Snapshot restored: ${selected.name}`, "success");
 }
 
 async function startSyncPull() {
