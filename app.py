@@ -55,7 +55,8 @@ def _default_settings() -> dict:
         "models_root": os.getenv("MODELS_ROOT", "~/models"),
         "s3_bucket": os.getenv("S3_BUCKET", ""),
         "s3_prefix": os.getenv("S3_PREFIX", "models-offload/"),
-        "s3_endpoint_url": os.getenv("S3_ENDPOINT_URL", "").strip() or os.getenv("R2_URL", "").strip(),
+        "s3_endpoint_url": os.getenv("S3_ENDPOINT_URL", "").strip()
+        or os.getenv("R2_URL", "").strip(),
         "r2_url": os.getenv("R2_URL", ""),
         "aws_profile": os.getenv("AWS_PROFILE", None),
         "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID", None),
@@ -80,7 +81,9 @@ def _normalize_settings(raw: dict) -> dict:
     merged["s3_bucket"] = str(merged.get("s3_bucket") or "")
     merged["s3_prefix"] = str(merged.get("s3_prefix") or "")
     merged["s3_endpoint_url"] = str(merged.get("s3_endpoint_url") or "").strip()
-    merged["r2_url"] = str(merged.get("r2_url") or merged["s3_endpoint_url"] or "").strip()
+    merged["r2_url"] = str(
+        merged.get("r2_url") or merged["s3_endpoint_url"] or ""
+    ).strip()
     if not merged["s3_endpoint_url"] and merged["r2_url"]:
         merged["s3_endpoint_url"] = merged["r2_url"]
     merged["aws_profile"] = str(merged.get("aws_profile") or "").strip() or None
@@ -102,7 +105,9 @@ def _normalize_settings(raw: dict) -> dict:
     merged["comfyui_base"] = os.path.expanduser(
         str(merged.get("comfyui_base") or "/workspace/ComfyUI")
     )
-    merged["comfyui_username"] = str(merged.get("comfyui_username") or "default").strip() or "default"
+    merged["comfyui_username"] = (
+        str(merged.get("comfyui_username") or "default").strip() or "default"
+    )
     merged["sync_folders"] = [
         str(f).strip()
         for f in (merged.get("sync_folders") or ["input", "output", "user"])
@@ -568,7 +573,10 @@ def get_disk():
     # If we landed on / or found nothing, prefer /workspace when it's a separate mount
     if not p or p == "/":
         try:
-            if os.path.exists("/workspace") and os.stat("/workspace").st_dev != os.stat("/").st_dev:
+            if (
+                os.path.exists("/workspace")
+                and os.stat("/workspace").st_dev != os.stat("/").st_dev
+            ):
                 p = "/workspace"
             else:
                 p = "/"
@@ -576,7 +584,14 @@ def get_disk():
             p = "/"
     usage = shutil.disk_usage(p)
     pct_used = round(usage.used / usage.total * 100, 1) if usage.total else 0
-    return jsonify({"total": usage.total, "used": usage.used, "free": usage.free, "pct_used": pct_used})
+    return jsonify(
+        {
+            "total": usage.total,
+            "used": usage.used,
+            "free": usage.free,
+            "pct_used": pct_used,
+        }
+    )
 
 
 @app.route("/api/config")
@@ -630,7 +645,9 @@ def update_config():
             if str(p).strip()
         ]
     if "comfyui_base" in d:
-        COMFYUI_BASE = os.path.expanduser(str(d["comfyui_base"] or "/workspace/ComfyUI"))
+        COMFYUI_BASE = os.path.expanduser(
+            str(d["comfyui_base"] or "/workspace/ComfyUI")
+        )
     if "comfyui_username" in d:
         COMFYUI_USERNAME = str(d["comfyui_username"] or "default").strip() or "default"
     if "sync_folders" in d:
@@ -789,7 +806,9 @@ def upload_files():
                 if already_on_s3:
                     job["done_files"] += 1
                     job["skipped_files"] += 1
-                    add_log("info", f"Skipped (already on S3): {os.path.basename(path)}")
+                    add_log(
+                        "info", f"Skipped (already on S3): {os.path.basename(path)}"
+                    )
                     continue
 
                 # FIX: use make_callback to properly capture job ref in closure
@@ -934,6 +953,7 @@ def delete_local():
     def delete_path(path):
         if os.path.isdir(path):
             import shutil
+
             shutil.rmtree(path)
             return True
         else:
@@ -975,7 +995,7 @@ def _list_s3_sync_objects(folders: list) -> dict:
     for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            rel = key[len(prefix):]
+            rel = key[len(prefix) :]
             if not rel:
                 continue
             folder = rel.split("/")[0]
@@ -1001,10 +1021,50 @@ def _scan_local_sync_files(folders: list) -> dict:
                 if p.is_file():
                     rel = str(p.relative_to(base)).replace(os.sep, "/")
                     stat = p.stat()
-                    result[rel] = {"path": str(p), "size": stat.st_size, "mtime": stat.st_mtime}
+                    result[rel] = {
+                        "path": str(p),
+                        "size": stat.st_size,
+                        "mtime": stat.st_mtime,
+                    }
         except (PermissionError, OSError):
             pass
     return result
+
+
+def _run_comfyui_manager_snapshot() -> tuple[bool, str]:
+    """Create a ComfyUI-Manager snapshot before backup/sync."""
+    comfy_path = Path(COMFYUI_BASE)
+    cm_cli = comfy_path / "custom_nodes" / "ComfyUI-Manager" / "cm-cli.py"
+
+    if not comfy_path.exists():
+        return False, f"ComfyUI base not found: {comfy_path}"
+    if not cm_cli.exists():
+        return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
+
+    env = os.environ.copy()
+    env["COMFYUI_PATH"] = str(comfy_path)
+
+    cmd = [sys.executable, str(cm_cli), "save-snapshot"]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(comfy_path),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except Exception as e:
+        return False, str(e)
+
+    output = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+
+    if proc.returncode != 0:
+        details = err or output or f"exit code {proc.returncode}"
+        return False, details
+
+    return True, output or "Snapshot created"
 
 
 # --- Sync endpoints ---
@@ -1031,7 +1091,9 @@ def sync_status():
 
     folder_stats = {}
     for folder in folders:
-        local_subset = {k: v for k, v in local_files.items() if k.startswith(f"{folder}/")}
+        local_subset = {
+            k: v for k, v in local_files.items() if k.startswith(f"{folder}/")
+        }
         s3_subset = {k: v for k, v in s3_objects.items() if k.startswith(f"{folder}/")}
 
         local_keys = set(local_subset)
@@ -1044,19 +1106,25 @@ def sync_status():
             "s3_count": len(s3_subset),
             "local_only_count": len(local_keys - s3_keys),
             "s3_only_count": len(s3_keys - local_keys),
-            "in_sync_count": sum(1 for r in both if local_subset[r]["size"] == s3_subset[r]["size"]),
-            "different_count": sum(1 for r in both if local_subset[r]["size"] != s3_subset[r]["size"]),
+            "in_sync_count": sum(
+                1 for r in both if local_subset[r]["size"] == s3_subset[r]["size"]
+            ),
+            "different_count": sum(
+                1 for r in both if local_subset[r]["size"] != s3_subset[r]["size"]
+            ),
             "local_size": sum(v["size"] for v in local_subset.values()),
             "s3_size": sum(v["size"] for v in s3_subset.values()),
         }
 
-    return jsonify({
-        "folders": folder_stats,
-        "comfyui_base": COMFYUI_BASE,
-        "comfyui_username": COMFYUI_USERNAME,
-        "sync_s3_prefix": _get_sync_s3_prefix(),
-        "platform_name": PLATFORM_NAME,
-    })
+    return jsonify(
+        {
+            "folders": folder_stats,
+            "comfyui_base": COMFYUI_BASE,
+            "comfyui_username": COMFYUI_USERNAME,
+            "sync_s3_prefix": _get_sync_s3_prefix(),
+            "platform_name": PLATFORM_NAME,
+        }
+    )
 
 
 @app.route("/api/sync/push", methods=["POST"])
@@ -1065,9 +1133,17 @@ def sync_push():
     folders = data.get("folders") or SYNC_FOLDERS
     job_id = data.get("job_id", f"sync_push_{int(time.time())}")
     force = bool(data.get("force", False))
+    create_snapshot = bool(data.get("create_snapshot", True))
 
     if not S3_BUCKET:
         return jsonify({"error": "No S3 bucket configured"}), 400
+
+    if create_snapshot:
+        ok, msg = _run_comfyui_manager_snapshot()
+        if ok:
+            add_log("success", f"ComfyUI snapshot created before sync push: {msg}")
+        else:
+            add_log("warning", f"ComfyUI snapshot failed (continuing sync push): {msg}")
 
     base = Path(COMFYUI_BASE)
     sync_prefix = _get_sync_s3_prefix()
@@ -1076,7 +1152,10 @@ def sync_push():
     existing_s3 = {}
     if not force:
         try:
-            existing_s3 = {rel: info["size"] for rel, info in _list_s3_sync_objects(folders).items()}
+            existing_s3 = {
+                rel: info["size"]
+                for rel, info in _list_s3_sync_objects(folders).items()
+            }
         except Exception as e:
             add_log("warning", f"Sync push: could not fetch existing S3 objects: {e}")
 
@@ -1103,7 +1182,11 @@ def sync_push():
         "finished": False,
     }
 
-    add_log("info", f"Sync push started — {len(upload_plan)} files, {skipped_pre} already in sync")
+    add_log(
+        "info",
+        f"Sync push started — {len(upload_plan)} files, {skipped_pre} already in sync"
+        + (", snapshot enabled" if create_snapshot else ""),
+    )
 
     def do_push():
         s3 = get_s3_client()
@@ -1115,11 +1198,17 @@ def sync_push():
                 job["skipped_files"] += 1
                 continue
             try:
+
                 def make_cb(j):
-                    def cb(n): j["transferred_bytes"] += n
+                    def cb(n):
+                        j["transferred_bytes"] += n
+
                     return cb
+
                 s3.upload_file(
-                    local_path, S3_BUCKET, s3_key,
+                    local_path,
+                    S3_BUCKET,
+                    s3_key,
                     ExtraArgs={"Metadata": {"local-mtime": str(mtime)}},
                     Callback=make_cb(job),
                 )
@@ -1128,10 +1217,15 @@ def sync_push():
             except Exception as e:
                 job["errors"].append({"path": local_path, "error": str(e)})
                 job["done_files"] += 1
-                add_log("error", f"Sync push failed {os.path.basename(local_path)}: {e}")
+                add_log(
+                    "error", f"Sync push failed {os.path.basename(local_path)}: {e}"
+                )
         skipped = job.get("skipped_files", 0)
         errs = len(job["errors"])
-        add_log("info", f"Sync push done — {job['done_files'] - errs - skipped} uploaded, {skipped} skipped, {errs} errors")
+        add_log(
+            "info",
+            f"Sync push done — {job['done_files'] - errs - skipped} uploaded, {skipped} skipped, {errs} errors",
+        )
         job["finished"] = True
 
     threading.Thread(target=do_push, daemon=True).start()
@@ -1163,7 +1257,11 @@ def sync_pull():
     total_bytes = 0
     for rel, info in sorted(s3_objects.items()):
         local_path = str(base / rel)
-        skip = (not force) and os.path.exists(local_path) and os.path.getsize(local_path) == info["size"]
+        skip = (
+            (not force)
+            and os.path.exists(local_path)
+            and os.path.getsize(local_path) == info["size"]
+        )
         download_plan.append((info["key"], local_path, info["size"], skip))
         if not skip:
             total_bytes += info["size"]
@@ -1180,7 +1278,10 @@ def sync_pull():
         "finished": False,
     }
 
-    add_log("info", f"Sync pull started — {len(download_plan)} files, {skipped_pre} already in sync")
+    add_log(
+        "info",
+        f"Sync pull started — {len(download_plan)} files, {skipped_pre} already in sync",
+    )
 
     def do_pull():
         s3 = get_s3_client()
@@ -1193,19 +1294,28 @@ def sync_pull():
                 continue
             try:
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
                 def make_cb(j):
-                    def cb(n): j["transferred_bytes"] += n
+                    def cb(n):
+                        j["transferred_bytes"] += n
+
                     return cb
+
                 s3.download_file(S3_BUCKET, key, local_path, Callback=make_cb(job))
                 job["done_files"] += 1
                 add_log("success", f"Sync pulled: {os.path.basename(local_path)}")
             except Exception as e:
                 job["errors"].append({"key": key, "error": str(e)})
                 job["done_files"] += 1
-                add_log("error", f"Sync pull failed {os.path.basename(local_path)}: {e}")
+                add_log(
+                    "error", f"Sync pull failed {os.path.basename(local_path)}: {e}"
+                )
         skipped = job.get("skipped_files", 0)
         errs = len(job["errors"])
-        add_log("info", f"Sync pull done — {job['done_files'] - errs - skipped} downloaded, {skipped} skipped, {errs} errors")
+        add_log(
+            "info",
+            f"Sync pull done — {job['done_files'] - errs - skipped} downloaded, {skipped} skipped, {errs} errors",
+        )
         job["finished"] = True
 
     threading.Thread(target=do_pull, daemon=True).start()
@@ -1247,7 +1357,10 @@ def delete_s3_folder():
         return jsonify({"error": "No S3 bucket configured"}), 400
 
     full_prefix = S3_PREFIX + prefix if not prefix.startswith(S3_PREFIX) else prefix
-    print(f"[delete_s3_folder] deleting all objects with prefix: {full_prefix}", flush=True)
+    print(
+        f"[delete_s3_folder] deleting all objects with prefix: {full_prefix}",
+        flush=True,
+    )
 
     s3 = get_s3_client()
     deleted, errors = 0, []
@@ -1259,8 +1372,7 @@ def delete_s3_folder():
             if objects:
                 delete_keys = [{"Key": obj["Key"]} for obj in objects]
                 s3.delete_objects(
-                    Bucket=S3_BUCKET,
-                    Delete={"Objects": delete_keys, "Quiet": True}
+                    Bucket=S3_BUCKET, Delete={"Objects": delete_keys, "Quiet": True}
                 )
                 deleted += len(delete_keys)
                 for obj in objects:
@@ -1298,8 +1410,7 @@ def _restart_process():
 
         # Launch next instance with a slight delay so current process can terminate first
         launch_cmd = (
-            f"sleep 0.6; "
-            f"exec {sys.executable} {script_path} --port {args.port}"
+            f"sleep 0.6; " f"exec {sys.executable} {script_path} --port {args.port}"
         )
         subprocess.Popen(
             ["/bin/bash", "-lc", launch_cmd],
