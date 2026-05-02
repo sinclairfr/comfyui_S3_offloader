@@ -183,6 +183,24 @@
   .folder-toggle.active { background: rgba(79,140,255,.12); border-color: var(--accent); color: var(--accent); }
   .folder-toggle:hover:not(.active) { border-color: var(--text3); color: var(--text); }
   .sync-info-box { padding: 12px 16px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; font-size: 11px; color: var(--text3); line-height: 1.7; }
+
+  /* Snapshot panel */
+  .snapshot-section { border: 1px solid var(--border2); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+  .snapshot-section-header { display: flex; align-items: center; gap: 10px; padding: 11px 16px; background: var(--surface2); cursor: pointer; user-select: none; }
+  .snapshot-section-header:hover { background: rgba(79,140,255,.06); }
+  .snapshot-section-title { font-family: var(--sans); font-weight: 700; font-size: 13px; flex: 1; }
+  .snapshot-section-body { padding: 14px 16px; display: none; }
+  .snapshot-section-body.open { display: block; }
+  .snapshot-sub-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 7px; margin-top: 12px; }
+  .snapshot-sub-label:first-child { margin-top: 0; }
+  .snapshot-row { display: flex; align-items: center; gap: 7px; padding: 7px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; }
+  .snapshot-row:last-child { margin-bottom: 0; }
+  .snapshot-row-icon { font-size: 13px; flex-shrink: 0; }
+  .snapshot-row-name { flex: 1; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .snapshot-row-meta { font-size: 10px; color: var(--text3); flex-shrink: 0; white-space: nowrap; }
+  .snapshot-empty { font-size: 11px; color: var(--text3); padding: 6px 0; }
+  .snapshot-chevron { font-size: 11px; color: var(--text3); transition: transform .15s; }
+  .snapshot-chevron.open { transform: rotate(180deg); }
 </style>
 </head>
 <body>
@@ -342,13 +360,29 @@
         </div>
       </div>
 
-      <!-- Action buttons -->
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
-        <button class="btn btn-secondary" onclick="saveComfySnapshotOnly()">📸 Save Snapshot</button>
-        <button class="btn btn-secondary" onclick="listSnapshotsAndRestore()">🗂 Restore Snapshot…</button>
-        <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push sélection</button>
-        <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull sélection</button>
-        <span style="font-size:11px;color:var(--text3);">Choisis exactement les dossiers à synchroniser (input / output / user / custom). Les fichiers déjà identiques sont ignorés.</span>
+      <!-- Assets sync buttons -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:18px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="startSyncPush()">⬆ Push</button>
+        <button class="btn btn-green" onclick="startSyncPull()">⬇ Pull</button>
+        <div style="width:1px;height:22px;background:var(--border2);margin:0 2px;"></div>
+        <button class="btn btn-secondary" onclick="startFullPush()" title="Save snapshot + push to R2 + push assets">⬆⬆ Full Push</button>
+        <button class="btn btn-green" onclick="startFullPull()" title="Pull assets + pull latest R2 snapshot + restore">⬇⬇ Full Pull</button>
+        <span style="font-size:11px;color:var(--text3);margin-left:4px;">Full Push/Pull inclut les snapshots custom nodes.</span>
+      </div>
+
+      <!-- Snapshots section -->
+      <div class="snapshot-section" id="snapshot-section">
+        <div class="snapshot-section-header" onclick="toggleSnapshotPanel()">
+          <span class="snapshot-section-title">📸 Snapshots — Custom Nodes</span>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();saveComfySnapshotOnly()">+ Save</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();refreshSnapshotPanel()">↻</button>
+          <span class="snapshot-chevron" id="snapshot-chevron">▼</span>
+        </div>
+        <div class="snapshot-section-body" id="snapshot-panel-body">
+          <div id="snapshot-panel-content">
+            <div class="snapshot-empty" style="text-align:center;padding:12px 0;">Cliquer pour charger les snapshots</div>
+          </div>
+        </div>
       </div>
 
       <!-- Status cards -->
@@ -1702,67 +1736,170 @@ async function startSyncPushSingle(folder) {
 }
 
 async function saveComfySnapshotOnly() {
-  const r = await fetch("/api/sync/snapshot/save", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" }
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    notify("Snapshot failed: " + (e.error || "error"), "error");
-    return;
-  }
+  const r = await fetch("/api/sync/snapshot/save", { method: "POST", headers: { "Content-Type": "application/json" } });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Snapshot failed: " + (e.error || "error"), "error"); return; }
   notify("ComfyUI snapshot saved", "success");
+  if (snapshotPanelOpen) refreshSnapshotPanel();
 }
 
-async function listSnapshotsAndRestore() {
-  const r = await fetch("/api/sync/snapshot/list");
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    notify("Snapshot list failed: " + (e.error || "error"), "error");
-    return;
+// --- Snapshot panel ---
+let snapshotPanelOpen = false;
+
+function toggleSnapshotPanel() {
+  snapshotPanelOpen = !snapshotPanelOpen;
+  const body = document.getElementById("snapshot-panel-body");
+  const chevron = document.getElementById("snapshot-chevron");
+  if (snapshotPanelOpen) {
+    body.classList.add("open");
+    chevron.classList.add("open");
+    refreshSnapshotPanel();
+  } else {
+    body.classList.remove("open");
+    chevron.classList.remove("open");
+  }
+}
+
+async function refreshSnapshotPanel() {
+  const content = document.getElementById("snapshot-panel-content");
+  if (!content) return;
+  content.innerHTML = `<div class="snapshot-empty" style="text-align:center;padding:12px 0;color:var(--text3);">⏳ Loading...</div>`;
+  try {
+    const r = await fetch("/api/sync/snapshot/list");
+    if (!r.ok) throw new Error("Failed to load snapshots");
+    const data = await r.json();
+    renderSnapshotPanel(data);
+  } catch (e) {
+    content.innerHTML = `<div class="snapshot-empty" style="color:var(--red);">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderSnapshotPanel(data) {
+  const content = document.getElementById("snapshot-panel-content");
+  const localSnaps = Array.isArray(data.local_snapshots) ? data.local_snapshots : (Array.isArray(data.snapshots) ? data.snapshots : []);
+  const r2Snaps = Array.isArray(data.s3_snapshots) ? data.s3_snapshots : [];
+
+  let html = "";
+
+  // Local snapshots
+  html += `<div class="snapshot-sub-label">📍 Local</div>`;
+  if (!localSnaps.length) {
+    html += `<div class="snapshot-empty">Aucun snapshot local trouvé</div>`;
+  } else {
+    localSnaps.forEach(s => {
+      const date = new Date(s.mtime_iso).toLocaleString();
+      const pathEsc = escapeAttr(s.path);
+      html += `<div class="snapshot-row">
+        <span class="snapshot-row-icon">📄</span>
+        <span class="snapshot-row-name" title="${escapeHtml(s.path)}">${escapeHtml(s.name)}</span>
+        <span class="snapshot-row-meta">${fmtSize(s.size)}</span>
+        <span class="snapshot-row-meta">${date}</span>
+        <button class="btn btn-secondary btn-sm" onclick="pushSnapshotToR2('${pathEsc}')" title="Upload vers R2">⬆ R2</button>
+        <button class="btn btn-orange btn-sm" onclick="restoreLocalSnapshot('${pathEsc}')" title="Restaurer ce snapshot">↩ Restore</button>
+      </div>`;
+    });
   }
 
-  const data = await r.json();
-  const snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
-  if (!snapshots.length) {
-    notify("No snapshot found", "error");
-    return;
+  // R2 snapshots
+  html += `<div class="snapshot-sub-label">☁️ R2</div>`;
+  if (data.s3_error) {
+    html += `<div class="snapshot-empty" style="color:var(--orange);">Erreur R2 : ${escapeHtml(data.s3_error)}</div>`;
+  } else if (!r2Snaps.length) {
+    html += `<div class="snapshot-empty">Aucun snapshot sur R2</div>`;
+  } else {
+    r2Snaps.forEach(s => {
+      const date = new Date(s.last_modified).toLocaleString();
+      const keyEsc = escapeAttr(s.key);
+      html += `<div class="snapshot-row">
+        <span class="snapshot-row-icon">☁️</span>
+        <span class="snapshot-row-name" title="${escapeHtml(s.key)}">${escapeHtml(s.name)}</span>
+        <span class="snapshot-row-meta">${fmtSize(s.size)}</span>
+        <span class="snapshot-row-meta">${date}</span>
+        <button class="btn btn-secondary btn-sm" onclick="pullSnapshotFromR2('${keyEsc}')" title="Télécharger en local">⬇ Local</button>
+        <button class="btn btn-orange btn-sm" onclick="restoreR2Snapshot('${keyEsc}')" title="Télécharger et restaurer">↩ Restore</button>
+      </div>`;
+    });
   }
 
-  const options = snapshots
-    .slice(0, 20)
-    .map((s, i) => `${i + 1}. ${s.name} (${fmtSize(s.size)} · ${new Date(s.mtime_iso).toLocaleString()})`)
-    .join("\n");
-
-  const picked = prompt(
-    "Choose snapshot number to restore:\n\n" +
-    options +
-    "\n\nEnter a number (1-" + Math.min(snapshots.length, 20) + ")"
-  );
-  if (!picked) return;
-
-  const idx = Number.parseInt(picked.trim(), 10);
-  if (!Number.isInteger(idx) || idx < 1 || idx > Math.min(snapshots.length, 20)) {
-    notify("Invalid snapshot number", "error");
-    return;
+  if (data.snapshots_s3_prefix) {
+    html += `<div style="margin-top:12px;font-size:10px;color:var(--text3);">Préfixe R2 : <code style="color:var(--accent)">${escapeHtml(data.snapshots_s3_prefix)}</code></div>`;
   }
 
-  const selected = snapshots[idx - 1];
-  const confirmMsg = `Restore snapshot ${selected.name}?`;
-  if (!confirm(confirmMsg)) return;
+  content.innerHTML = html;
+}
 
-  const rr = await fetch("/api/sync/snapshot/restore", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ snapshot_path: selected.path })
+function escapeAttr(str) {
+  return String(str).replace(/'/g, "\\'").replace(/"/g, "&quot;");
+}
+
+async function pushSnapshotToR2(snapshotPath) {
+  const r = await fetch("/api/sync/snapshot/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ snapshot_path: snapshotPath })
   });
-  if (!rr.ok) {
-    const e = await rr.json().catch(() => ({}));
-    notify("Snapshot restore failed: " + (e.error || "error"), "error");
-    return;
-  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { notify("Push R2 échoué : " + (data.error || "error"), "error"); return; }
+  notify(`Snapshot envoyé sur R2 : ${data.name}`, "success");
+  refreshSnapshotPanel();
+}
 
-  notify(`Snapshot restored: ${selected.name}`, "success");
+async function pullSnapshotFromR2(key) {
+  const r = await fetch("/api/sync/snapshot/pull", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { notify("Pull R2 échoué : " + (data.error || "error"), "error"); return; }
+  notify(`Snapshot téléchargé : ${data.name}`, "success");
+  refreshSnapshotPanel();
+}
+
+async function restoreLocalSnapshot(snapshotPath) {
+  const name = snapshotPath.split("/").pop();
+  if (!confirm(`Restaurer le snapshot ?\n${name}`)) return;
+  const r = await fetch("/api/sync/snapshot/restore", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ snapshot_path: snapshotPath })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { notify("Restore échoué : " + (data.error || "error"), "error"); return; }
+  notify(`Snapshot restauré : ${name}`, "success");
+}
+
+async function restoreR2Snapshot(key) {
+  const name = key.split("/").pop();
+  if (!confirm(`Télécharger et restaurer depuis R2 ?\n${name}`)) return;
+  const r = await fetch("/api/sync/snapshot/restore", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from_r2: true, r2_key: key })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { notify("Restore R2 échoué : " + (data.error || "error"), "error"); return; }
+  notify(`Snapshot R2 restauré : ${name}`, "success");
+  refreshSnapshotPanel();
+}
+
+async function startFullPush() {
+  const folders = Array.from(activeSyncFolders);
+  if (!folders.length) { notify("Aucun dossier sélectionné", "error"); return; }
+  const jobId = "sync_push_" + Date.now();
+  const r = await fetch("/api/sync/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folders, job_id: jobId, create_snapshot: true, push_snapshot: true })
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Full Push échoué : " + (e.error || "error"), "error"); return; }
+  trackJob(jobId, `Full Push (snapshot + assets) → R2`, () => { loadSyncStatus(); if (snapshotPanelOpen) refreshSnapshotPanel(); });
+}
+
+async function startFullPull() {
+  const folders = Array.from(activeSyncFolders);
+  if (!folders.length) { notify("Aucun dossier sélectionné", "error"); return; }
+  const jobId = "sync_pull_" + Date.now();
+  const r = await fetch("/api/sync/pull", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folders, job_id: jobId, restore_from_r2: true })
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Full Pull échoué : " + (e.error || "error"), "error"); return; }
+  trackJob(jobId, `Full Pull (assets + snapshot R2)`, () => { loadSyncStatus(); if (snapshotPanelOpen) refreshSnapshotPanel(); });
 }
 
 async function startSyncPull() {

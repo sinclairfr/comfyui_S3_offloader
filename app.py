@@ -1121,6 +1121,72 @@ def _snapshot_candidates_dirs() -> list[Path]:
     ]
 
 
+def _get_snapshots_s3_prefix() -> str:
+    base = (S3_PREFIX or "").rstrip("/")
+    return f"{base}/snapshots/" if base else "snapshots/"
+
+
+def _list_s3_snapshots() -> list[dict]:
+    """List snapshot files stored in R2/S3 under the snapshots/ prefix."""
+    prefix = _get_snapshots_s3_prefix()
+    s3 = get_s3_client()
+    objects = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            rel = key[len(prefix):]
+            if not rel or "/" in rel:
+                continue
+            if Path(rel).suffix.lower() not in {".json", ".snapshot", ".txt"}:
+                continue
+            last_mod = obj["LastModified"]
+            objects.append(
+                {
+                    "name": rel,
+                    "key": key,
+                    "size": obj["Size"],
+                    "last_modified": last_mod.isoformat(),
+                    "mtime": last_mod.timestamp(),
+                    "source": "r2",
+                }
+            )
+    objects.sort(key=lambda x: x["mtime"], reverse=True)
+    return objects
+
+
+def _download_s3_snapshot(key: str) -> tuple[Path | None, str]:
+    """Download a snapshot from R2/S3 to the local snapshots directory."""
+    prefix = _get_snapshots_s3_prefix()
+    if not key.startswith(prefix):
+        return None, "Key is not in snapshots prefix"
+    name = key[len(prefix):]
+    if "/" in name or not name:
+        return None, "Invalid snapshot key"
+
+    candidate_dirs = _snapshot_candidates_dirs()
+    dest_dir: Path | None = None
+    for d in candidate_dirs:
+        if d.exists():
+            dest_dir = d
+            break
+    if dest_dir is None:
+        dest_dir = candidate_dirs[-1]
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return None, f"Cannot create snapshots directory: {e}"
+
+    dest_path = dest_dir / name
+    try:
+        s3 = get_s3_client()
+        s3.download_file(S3_BUCKET, key, str(dest_path))
+        add_log("success", f"Snapshot downloaded from R2: {name}")
+        return dest_path, ""
+    except Exception as e:
+        return None, str(e)
+
+
 def _list_comfyui_snapshots() -> tuple[list[dict], list[str]]:
     snapshots = []
     seen = set()
@@ -1231,10 +1297,23 @@ def sync_push():
     if not S3_BUCKET:
         return jsonify({"error": "No S3 bucket configured"}), 400
 
+    push_snapshot = bool(data.get("push_snapshot", False))
+
     if create_snapshot:
         ok, msg = _run_comfyui_manager_snapshot()
         if ok:
             add_log("success", f"ComfyUI snapshot created before sync push: {msg}")
+            if push_snapshot and S3_BUCKET:
+                snaps, _ = _list_comfyui_snapshots()
+                if snaps:
+                    snap_file = Path(snaps[0]["path"])
+                    s3_snap_key = f"{_get_snapshots_s3_prefix()}{snap_file.name}"
+                    try:
+                        _s3 = get_s3_client()
+                        _s3.upload_file(str(snap_file), S3_BUCKET, s3_snap_key)
+                        add_log("success", f"Snapshot pushed to R2: {snap_file.name}")
+                    except Exception as _e:
+                        add_log("warning", f"Snapshot push to R2 failed: {_e}")
         else:
             add_log("warning", f"ComfyUI snapshot failed (continuing sync push): {msg}")
 
@@ -1331,6 +1410,7 @@ def sync_pull():
     folders = data.get("folders") or SYNC_FOLDERS
     job_id = data.get("job_id", f"sync_pull_{int(time.time())}")
     force = bool(data.get("force", False))
+    restore_from_r2 = bool(data.get("restore_from_r2", False))
 
     if not S3_BUCKET:
         return jsonify({"error": "No S3 bucket configured"}), 400
@@ -1410,16 +1490,43 @@ def sync_pull():
             f"Sync pull done — {job['done_files'] - errs - skipped} downloaded, {skipped} skipped, {errs} errors",
         )
 
-        restore_ok, restore_msg = _run_comfyui_manager_restore_snapshot()
-        if restore_ok:
-            add_log(
-                "success", f"ComfyUI snapshot restored after sync pull: {restore_msg}"
-            )
+        if restore_from_r2 and S3_BUCKET:
+            try:
+                r2_snaps = _list_s3_snapshots()
+                if r2_snaps:
+                    latest = r2_snaps[0]
+                    dest_path, dl_err = _download_s3_snapshot(latest["key"])
+                    if dest_path:
+                        restore_ok, restore_msg = _run_comfyui_manager_restore_snapshot(
+                            snapshot_file=str(dest_path)
+                        )
+                        if restore_ok:
+                            add_log(
+                                "success",
+                                f"R2 snapshot restored after pull: {latest['name']} — {restore_msg}",
+                            )
+                        else:
+                            add_log(
+                                "warning",
+                                f"R2 snapshot restore failed: {restore_msg}",
+                            )
+                    else:
+                        add_log("warning", f"R2 snapshot download failed: {dl_err}")
+                else:
+                    add_log("warning", "No R2 snapshots found for auto-restore")
+            except Exception as _e:
+                add_log("warning", f"R2 snapshot restore error: {_e}")
         else:
-            add_log(
-                "warning",
-                f"ComfyUI snapshot restore failed after sync pull: {restore_msg}",
-            )
+            restore_ok, restore_msg = _run_comfyui_manager_restore_snapshot()
+            if restore_ok:
+                add_log(
+                    "success", f"ComfyUI snapshot restored after sync pull: {restore_msg}"
+                )
+            else:
+                add_log(
+                    "warning",
+                    f"ComfyUI snapshot restore failed after sync pull: {restore_msg}",
+                )
 
         job["finished"] = True
 
@@ -1439,32 +1546,110 @@ def sync_snapshot_save():
 
 @app.route("/api/sync/snapshot/list")
 def sync_snapshot_list():
-    snapshots, searched_dirs = _list_comfyui_snapshots()
+    local_snapshots, searched_dirs = _list_comfyui_snapshots()
+
+    s3_snapshots: list[dict] = []
+    s3_error: str | None = None
+    snapshots_s3_prefix: str | None = None
+    if S3_BUCKET:
+        try:
+            s3_snapshots = _list_s3_snapshots()
+            snapshots_s3_prefix = _get_snapshots_s3_prefix()
+        except Exception as e:
+            s3_error = str(e)
+
     return jsonify(
         {
-            "snapshots": snapshots,
+            "snapshots": local_snapshots,  # backward compat
+            "local_snapshots": local_snapshots,
+            "s3_snapshots": s3_snapshots,
+            "s3_error": s3_error,
             "searched_dirs": searched_dirs,
+            "snapshots_s3_prefix": snapshots_s3_prefix,
             "comfyui_base": COMFYUI_BASE,
             "comfyui_username": COMFYUI_USERNAME,
         }
     )
 
 
+@app.route("/api/sync/snapshot/push", methods=["POST"])
+def sync_snapshot_push():
+    """Upload a local snapshot to R2/S3."""
+    if not S3_BUCKET:
+        return jsonify({"error": "No S3 bucket configured"}), 400
+
+    data = request.json or {}
+    snapshot_path = str(data.get("snapshot_path") or "").strip()
+
+    if snapshot_path:
+        snapshots, _ = _list_comfyui_snapshots()
+        allowed = {str(Path(s["path"]).resolve()) for s in snapshots}
+        target = str(Path(snapshot_path).resolve())
+        if target not in allowed:
+            return jsonify({"error": "Snapshot not found in known snapshot directories"}), 404
+        snap_file = Path(target)
+    else:
+        snapshots, _ = _list_comfyui_snapshots()
+        if not snapshots:
+            return jsonify({"error": "No local snapshots found"}), 404
+        snap_file = Path(snapshots[0]["path"])
+
+    prefix = _get_snapshots_s3_prefix()
+    s3_key = f"{prefix}{snap_file.name}"
+
+    try:
+        s3 = get_s3_client()
+        s3.upload_file(str(snap_file), S3_BUCKET, s3_key)
+        add_log("success", f"Snapshot pushed to R2: {snap_file.name}")
+        return jsonify({"status": "ok", "key": s3_key, "name": snap_file.name})
+    except Exception as e:
+        add_log("error", f"Snapshot push to R2 failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/sync/snapshot/pull", methods=["POST"])
+def sync_snapshot_pull():
+    """Download a snapshot from R2/S3 to local snapshots directory."""
+    if not S3_BUCKET:
+        return jsonify({"error": "No S3 bucket configured"}), 400
+
+    data = request.json or {}
+    key = str(data.get("key") or "").strip()
+    if not key:
+        return jsonify({"error": "key is required"}), 400
+
+    dest_path, err = _download_s3_snapshot(key)
+    if dest_path is None:
+        add_log("error", f"Snapshot pull from R2 failed: {err}")
+        return jsonify({"error": err}), 500
+
+    return jsonify({"status": "ok", "path": str(dest_path), "name": dest_path.name})
+
+
 @app.route("/api/sync/snapshot/restore", methods=["POST"])
 def sync_snapshot_restore():
     data = request.json or {}
     snapshot_path = str(data.get("snapshot_path") or "").strip()
+    from_r2 = bool(data.get("from_r2", False))
+    r2_key = str(data.get("r2_key") or "").strip()
+
+    if from_r2 and r2_key:
+        if not S3_BUCKET:
+            return jsonify({"error": "No S3 bucket configured"}), 400
+        dest_path, err = _download_s3_snapshot(r2_key)
+        if dest_path is None:
+            add_log("error", f"Snapshot download from R2 failed: {err}")
+            return jsonify({"error": f"Download from R2 failed: {err}"}), 500
+        snapshot_path = str(dest_path)
+
     if not snapshot_path:
-        return jsonify({"error": "snapshot_path is required"}), 400
+        return jsonify({"error": "snapshot_path or r2_key is required"}), 400
 
     snapshots, _ = _list_comfyui_snapshots()
     allowed = {str(Path(s["path"]).resolve()) for s in snapshots}
     target = str(Path(snapshot_path).resolve())
     if target not in allowed:
-        return (
-            jsonify({"error": "Snapshot not found in known snapshot directories"}),
-            404,
-        )
+        return jsonify({"error": "Snapshot not found in known snapshot directories"}), 404
 
     ok, msg = _run_comfyui_manager_restore_snapshot(snapshot_file=target)
     if ok:
