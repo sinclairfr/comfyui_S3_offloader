@@ -106,6 +106,23 @@ Exemple:
 CONFIG_FILE=/chemin/vers/mes-settings.json python app.py
 ```
 
+## Wrapper auto-update (start_wrapper.sh)
+
+Si tu lances via `start_wrapper.sh`, le script:
+
+- pré-ajoute la clé SSH `github.com` dans `~/.ssh/known_hosts` (évite le prompt interactif)
+- fait un `git fetch --prune`
+- fait un `git pull --ff-only` sur la branche courante si `origin/<branche>` existe
+- démarre ensuite `python app.py`
+
+Exemple:
+
+```bash
+./start_wrapper.sh
+# ou avec un port custom
+./start_wrapper.sh --port 5050
+```
+
 ## Fonctionnement
 
 - **Local Files tab** : browse ton dossier de modèles, coche les fichiers, "Send to S3"
