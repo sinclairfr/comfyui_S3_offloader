@@ -385,6 +385,25 @@
         </div>
       </div>
 
+      <!-- Scripts offload section -->
+      <div class="snapshot-section" id="scripts-section">
+        <div class="snapshot-section-header" onclick="toggleScriptsPanel()">
+          <span class="snapshot-section-title">🚀 Scripts — Auto-update depuis R2</span>
+          <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();pushScriptsToR2()">⬆ Push to R2</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();refreshScriptsPanel()">↻</button>
+          <span class="snapshot-chevron" id="scripts-chevron">▼</span>
+        </div>
+        <div class="snapshot-section-body" id="scripts-panel-body">
+          <div id="scripts-panel-content">
+            <div class="snapshot-empty" style="text-align:center;padding:12px 0;">Cliquer pour charger l'état des scripts</div>
+          </div>
+          <div style="margin-top:12px;font-size:11px;color:var(--text3);line-height:1.8;">
+            Push <code style="color:var(--accent)">app.py</code>, <code style="color:var(--accent)">start_wrapper.sh</code> et <code style="color:var(--accent)">self_update.py</code> vers R2.<br>
+            Au prochain démarrage du pod, <code style="color:var(--accent)">self_update.py</code> les télécharge automatiquement — <strong style="color:var(--text2)">sans rebuild Docker</strong>.
+          </div>
+        </div>
+      </div>
+
       <!-- Status cards -->
       <div id="sync-status-content">
         <div class="empty-state"><div class="icon">🔄</div><p>Cliquer <strong>Status</strong> pour comparer local vs S3/R2</p></div>
@@ -1923,6 +1942,59 @@ async function startSyncPullSingle(folder) {
   });
   if (!r.ok) { const e = await r.json().catch(() => ({})); notify("Failed: " + (e.error || "error"), "error"); return; }
   trackJob(jobId, `Pulling ${folder} from S3`, () => loadSyncStatus());
+}
+
+// --- Scripts offload ---
+let scriptsPanelOpen = false;
+
+function toggleScriptsPanel() {
+  scriptsPanelOpen = !scriptsPanelOpen;
+  document.getElementById("scripts-panel-body").classList.toggle("open", scriptsPanelOpen);
+  document.getElementById("scripts-chevron").classList.toggle("open", scriptsPanelOpen);
+  if (scriptsPanelOpen) refreshScriptsPanel();
+}
+
+async function refreshScriptsPanel() {
+  const content = document.getElementById("scripts-panel-content");
+  content.innerHTML = '<div class="snapshot-empty" style="text-align:center;padding:12px 0;">Chargement...</div>';
+  const r = await fetch("/api/scripts/info");
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    content.innerHTML = `<div class="snapshot-empty" style="color:var(--red);">Erreur: ${escapeHtml(e.error || "unknown")}</div>`;
+    return;
+  }
+  const data = await r.json();
+  if (data.s3_error) {
+    content.innerHTML = `<div class="snapshot-empty" style="color:var(--orange);">Erreur S3: ${escapeHtml(data.s3_error)}</div>`;
+    return;
+  }
+  let html = "";
+  for (const f of (data.scripts || [])) {
+    const icon = !f.on_s3 ? "⬜" : f.up_to_date ? "✅" : "🔄";
+    const s3Label = f.on_s3
+      ? `<span class="s3-badge">R2</span> <span class="snapshot-row-meta">${fmtSize(f.s3_size)}</span>`
+      : `<span style="color:var(--text3);font-size:10px;">pas encore uploadé</span>`;
+    html += `<div class="snapshot-row">
+      <span class="snapshot-row-icon">${icon}</span>
+      <span class="snapshot-row-name">${escapeHtml(f.name)}</span>
+      <span class="snapshot-row-meta">${fmtSize(f.local_size)} local</span>
+      ${s3Label}
+    </div>`;
+  }
+  if (data.scripts_s3_prefix) {
+    html += `<div style="margin-top:10px;font-size:10px;color:var(--text3);">Préfixe R2 : <code style="color:var(--accent)">${escapeHtml(data.scripts_s3_prefix)}</code></div>`;
+  }
+  content.innerHTML = html || '<div class="snapshot-empty">Aucun script trouvé</div>';
+}
+
+async function pushScriptsToR2() {
+  const r = await fetch("/api/scripts/push", {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { notify("Push scripts échoué : " + (data.error || "error"), "error"); return; }
+  notify(`Scripts envoyés sur R2 : ${(data.pushed || []).join(", ")}`, "success");
+  if (scriptsPanelOpen) refreshScriptsPanel();
 }
 
 // --- Utils ---

@@ -21,12 +21,22 @@ ensure_github_known_host() {
   fi
 }
 
+# Download latest scripts from S3/R2 — avoids Docker rebuild on code changes.
+# Falls back silently if S3 is not configured or unavailable.
+try_s3_update() {
+  echo "[start_wrapper] Checking S3/R2 for script updates..."
+  python3 "$REPO_DIR/self_update.py" || echo "[start_wrapper] WARNING: S3 script update failed, continuing"
+}
+
 update_repo() {
   echo "[start_wrapper] Syncing branch '$branch' from origin..."
-  git fetch --prune origin
+  if ! git fetch --prune origin 2>&1; then
+    echo "[start_wrapper] WARNING: git fetch failed, continuing with current version"
+    return 0
+  fi
 
   if git show-ref --quiet "refs/remotes/origin/$branch"; then
-    git pull --ff-only origin "$branch"
+    git pull --ff-only origin "$branch" || echo "[start_wrapper] WARNING: git pull failed, continuing"
   else
     echo "[start_wrapper] No origin/$branch found; skipping pull."
   fi
@@ -34,9 +44,10 @@ update_repo() {
 
 start_app() {
   echo "[start_wrapper] Starting app..."
-  exec python app.py "$@"
+  exec python3 app.py "$@"
 }
 
 ensure_github_known_host
+try_s3_update
 update_repo
 start_app "$@"

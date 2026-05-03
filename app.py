@@ -166,7 +166,7 @@ def parse_csv(raw: str):
 DEFAULT_PERSONAL_PATHS = [
     "/workspace/ComfyUI/custom_nodes",
     "/workspace/ComfyUI/user",
-    "/workspacecomfyui_S3_offloader",
+    "/workspace/comfyui_S3_offloader",
     "/workspace/medo_start.sh",
 ]
 
@@ -1224,6 +1224,89 @@ def _list_comfyui_snapshots() -> tuple[list[dict], list[str]]:
 
     snapshots.sort(key=lambda s: s["mtime"], reverse=True)
     return snapshots, searched_dirs
+
+
+# --- Scripts offload ---
+
+OFFLOAD_SCRIPT_FILES = ["app.py", "start_wrapper.sh", "self_update.py"]
+
+
+def _get_scripts_s3_prefix() -> str:
+    base = (S3_PREFIX or "").rstrip("/")
+    return f"{base}/scripts/" if base else "scripts/"
+
+
+@app.route("/api/scripts/info")
+def scripts_info():
+    """Return local vs S3 state for each offloaded script file."""
+    prefix = _get_scripts_s3_prefix()
+    s3_objects: dict = {}
+    s3_error = None
+    if S3_BUCKET:
+        try:
+            s3 = get_s3_client()
+            resp = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+            for obj in resp.get("Contents", []):
+                name = obj["Key"][len(prefix):]
+                if name and "/" not in name:
+                    s3_objects[name] = obj
+        except Exception as e:
+            s3_error = str(e)
+
+    scripts = []
+    repo_dir = Path(__file__).parent
+    for filename in OFFLOAD_SCRIPT_FILES:
+        local_path = repo_dir / filename
+        local_size = local_path.stat().st_size if local_path.exists() else 0
+        on_s3 = filename in s3_objects
+        s3_size = s3_objects[filename]["Size"] if on_s3 else 0
+        scripts.append(
+            {
+                "name": filename,
+                "local_size": local_size,
+                "s3_key": f"{prefix}{filename}" if S3_BUCKET else "",
+                "on_s3": on_s3,
+                "s3_size": s3_size,
+                "up_to_date": on_s3 and local_size == s3_size,
+            }
+        )
+
+    return jsonify(
+        {
+            "scripts": scripts,
+            "scripts_s3_prefix": prefix if S3_BUCKET else "",
+            "s3_error": s3_error,
+        }
+    )
+
+
+@app.route("/api/scripts/push", methods=["POST"])
+def scripts_push():
+    """Upload current app scripts to S3/R2 so pods can self-update without Docker rebuild."""
+    if not S3_BUCKET:
+        return jsonify({"error": "No S3 bucket configured"}), 400
+
+    prefix = _get_scripts_s3_prefix()
+    repo_dir = Path(__file__).parent
+    pushed, errors = [], []
+
+    s3 = get_s3_client()
+    for filename in OFFLOAD_SCRIPT_FILES:
+        local_path = repo_dir / filename
+        if not local_path.exists():
+            continue
+        s3_key = f"{prefix}{filename}"
+        try:
+            s3.upload_file(str(local_path), S3_BUCKET, s3_key)
+            pushed.append(filename)
+            add_log("success", f"Script pushed to R2: {filename}")
+        except Exception as e:
+            errors.append({"file": filename, "error": str(e)})
+            add_log("error", f"Script push failed ({filename}): {e}")
+
+    if errors:
+        return jsonify({"pushed": pushed, "errors": errors}), 500
+    return jsonify({"pushed": pushed, "scripts_s3_prefix": prefix})
 
 
 # --- Sync endpoints ---
