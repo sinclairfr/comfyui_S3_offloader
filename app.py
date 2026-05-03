@@ -1113,10 +1113,13 @@ def _snapshot_candidates_dirs() -> list[Path]:
     base = Path(COMFYUI_BASE)
     username = str(COMFYUI_USERNAME or "default").strip() or "default"
     return [
+        # Newer ComfyUI-Manager stores data under user/__manager/
+        base / "user" / "__manager" / "snapshots",
         base / "user" / username / "default" / "ComfyUI-Manager" / "snapshots",
         base / "user" / username / "ComfyUI-Manager" / "snapshots",
         base / "user" / "default" / "ComfyUI-Manager" / "snapshots",
         base / "user" / "ComfyUI-Manager" / "snapshots",
+        base / "custom_nodes" / "ComfyUI-Manager" / "snapshots",
         base / "ComfyUI-Manager" / "snapshots",
     ]
 
