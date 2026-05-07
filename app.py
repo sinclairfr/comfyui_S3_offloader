@@ -1033,6 +1033,20 @@ def _scan_local_sync_files(folders: list) -> dict:
     return result
 
 
+def _detect_platform() -> str:
+    """Detect cloud platform: 'vastai', 'runpod', or value of PLATFORM_NAME env."""
+    explicit = str(os.getenv("PLATFORM_NAME", "")).strip().lower()
+    if explicit:
+        return explicit
+    if any(os.getenv(v) for v in ("VAST_CONTAINERLABEL", "VAST_TCP_PORT_8188", "VAST_TASK_ID")):
+        return "vastai"
+    if any(os.getenv(v) for v in ("RUNPOD_POD_ID", "RUNPOD_API_KEY")):
+        return "runpod"
+    if Path("/runpod-volume").exists():
+        return "runpod"
+    return "unknown"
+
+
 def _ensure_typer_installed() -> tuple[bool, str]:
     """Install typer if missing — needed by cm-cli.py on some platforms (e.g. vast.ai)."""
     try:
@@ -1054,23 +1068,65 @@ def _ensure_typer_installed() -> tuple[bool, str]:
         return False, str(exc)
 
 
-def _run_comfyui_manager_snapshot() -> tuple[bool, str]:
-    """Create a ComfyUI-Manager snapshot before backup/sync."""
+def _scan_snapshot_files() -> dict[str, float]:
+    """Return {absolute_path: mtime} for all snapshot files in candidate dirs."""
+    state: dict[str, float] = {}
+    for d in _snapshot_candidates_dirs():
+        if not d.exists():
+            continue
+        try:
+            for p in d.iterdir():
+                if p.is_file() and p.suffix.lower() in {".json", ".snapshot", ".txt"}:
+                    state[str(p.resolve())] = p.stat().st_mtime
+        except Exception:
+            pass
+    return state
+
+
+def _find_new_snapshot(before: dict[str, float]) -> Path | None:
+    """Return the snapshot file that appeared or changed since `before` was captured."""
+    after = _scan_snapshot_files()
+    new_files = [
+        Path(p) for p, mtime in after.items()
+        if p not in before or mtime > before[p]
+    ]
+    if not new_files:
+        return None
+    return max(new_files, key=lambda p: p.stat().st_mtime)
+
+
+def _best_snapshot_restore_dir() -> Path:
+    """Return the best local directory to place a downloaded snapshot for cm-cli to find."""
+    for d in _snapshot_candidates_dirs():
+        if d.exists():
+            return d
+    d = _snapshot_candidates_dirs()[0]
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _run_comfyui_manager_snapshot() -> tuple[bool, str, Path | None]:
+    """Save a ComfyUI-Manager snapshot.
+
+    Returns (ok, message, snapshot_path). snapshot_path is None on failure.
+    """
+    platform = _detect_platform()
     comfy_path = Path(COMFYUI_BASE)
     cm_cli = comfy_path / "custom_nodes" / "ComfyUI-Manager" / "cm-cli.py"
 
     if not comfy_path.exists():
-        return False, f"ComfyUI base not found: {comfy_path}"
+        return False, f"ComfyUI base not found: {comfy_path}", None
     if not cm_cli.exists():
-        return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
+        return False, f"ComfyUI-Manager CLI not found: {cm_cli}", None
 
-    ok, msg = _ensure_typer_installed()
+    ok, dep_msg = _ensure_typer_installed()
     if not ok:
-        return False, f"Cannot run cm-cli.py: {msg}"
+        return False, f"[{platform}] Cannot run cm-cli.py: {dep_msg}", None
+
+    before = _scan_snapshot_files()
 
     env = os.environ.copy()
     env["COMFYUI_PATH"] = str(comfy_path)
-
     cmd = [sys.executable, str(cm_cli), "save-snapshot"]
     try:
         proc = subprocess.run(
@@ -1082,22 +1138,28 @@ def _run_comfyui_manager_snapshot() -> tuple[bool, str]:
             timeout=180,
         )
     except Exception as e:
-        return False, str(e)
+        return False, str(e), None
 
     output = (proc.stdout or "").strip()
     err = (proc.stderr or "").strip()
 
     if proc.returncode != 0:
         details = err or output or f"exit code {proc.returncode}"
-        return False, details
+        return False, f"[{platform}] {details}", None
 
-    return True, output or "Snapshot created"
+    snap_path = _find_new_snapshot(before)
+    msg = snap_path.name if snap_path else (output or "Snapshot saved")
+    return True, msg, snap_path
 
 
 def _run_comfyui_manager_restore_snapshot(
     snapshot_file: str | None = None,
 ) -> tuple[bool, str]:
-    """Restore ComfyUI-Manager snapshot (latest or selected file)."""
+    """Restore a ComfyUI-Manager snapshot.
+
+    If snapshot_file is None, the latest local snapshot is used automatically.
+    """
+    platform = _detect_platform()
     comfy_path = Path(COMFYUI_BASE)
     cm_cli = comfy_path / "custom_nodes" / "ComfyUI-Manager" / "cm-cli.py"
 
@@ -1106,13 +1168,21 @@ def _run_comfyui_manager_restore_snapshot(
     if not cm_cli.exists():
         return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
 
-    ok, msg = _ensure_typer_installed()
+    ok, dep_msg = _ensure_typer_installed()
     if not ok:
-        return False, f"Cannot run cm-cli.py: {msg}"
+        return False, f"[{platform}] Cannot run cm-cli.py: {dep_msg}"
+
+    # Resolve snapshot file: explicit path takes priority, then latest local
+    if not snapshot_file:
+        snaps, _ = _list_comfyui_snapshots()
+        if snaps:
+            snapshot_file = snaps[0]["path"]
+
+    if snapshot_file and not Path(snapshot_file).exists():
+        return False, f"[{platform}] Snapshot file not found: {snapshot_file}"
 
     env = os.environ.copy()
     env["COMFYUI_PATH"] = str(comfy_path)
-
     cmd = [sys.executable, str(cm_cli), "restore-snapshot"]
     if snapshot_file:
         cmd.append(snapshot_file)
@@ -1133,9 +1203,10 @@ def _run_comfyui_manager_restore_snapshot(
 
     if proc.returncode != 0:
         details = err or output or f"exit code {proc.returncode}"
-        return False, details
+        return False, f"[{platform}] {details}"
 
-    return True, output or "Snapshot restored"
+    snap_name = Path(snapshot_file).name if snapshot_file else "latest"
+    return True, output or f"Snapshot restored: {snap_name}"
 
 
 def _snapshot_candidates_dirs() -> list[Path]:
@@ -1196,18 +1267,10 @@ def _download_s3_snapshot(key: str) -> tuple[Path | None, str]:
     if "/" in name or not name:
         return None, "Invalid snapshot key"
 
-    candidate_dirs = _snapshot_candidates_dirs()
-    dest_dir: Path | None = None
-    for d in candidate_dirs:
-        if d.exists():
-            dest_dir = d
-            break
-    if dest_dir is None:
-        dest_dir = candidate_dirs[-1]
-        try:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            return None, f"Cannot create snapshots directory: {e}"
+    try:
+        dest_dir = _best_snapshot_restore_dir()
+    except Exception as e:
+        return None, f"Cannot create snapshots directory: {e}"
 
     dest_path = dest_dir / name
     try:
@@ -1332,20 +1395,19 @@ def sync_push():
     push_snapshot = bool(data.get("push_snapshot", False))
 
     if create_snapshot:
-        ok, msg = _run_comfyui_manager_snapshot()
+        ok, msg, snap_path = _run_comfyui_manager_snapshot()
         if ok:
-            add_log("success", f"ComfyUI snapshot created before sync push: {msg}")
-            if push_snapshot and S3_BUCKET:
-                snaps, _ = _list_comfyui_snapshots()
-                if snaps:
-                    snap_file = Path(snaps[0]["path"])
-                    s3_snap_key = f"{_get_snapshots_s3_prefix()}{snap_file.name}"
-                    try:
-                        _s3 = get_s3_client()
-                        _s3.upload_file(str(snap_file), S3_BUCKET, s3_snap_key)
-                        add_log("success", f"Snapshot pushed to R2: {snap_file.name}")
-                    except Exception as _e:
-                        add_log("warning", f"Snapshot push to R2 failed: {_e}")
+            add_log("success", f"ComfyUI snapshot saved before sync push: {msg}")
+            if push_snapshot and S3_BUCKET and snap_path:
+                s3_snap_key = f"{_get_snapshots_s3_prefix()}{snap_path.name}"
+                try:
+                    _s3 = get_s3_client()
+                    _s3.upload_file(str(snap_path), S3_BUCKET, s3_snap_key)
+                    add_log("success", f"Snapshot pushed to R2: {snap_path.name}")
+                except Exception as _e:
+                    add_log("warning", f"Snapshot push to R2 failed: {_e}")
+            elif push_snapshot and S3_BUCKET and not snap_path:
+                add_log("warning", "Snapshot saved but file could not be located — R2 push skipped")
         else:
             add_log("warning", f"ComfyUI snapshot failed (continuing sync push): {msg}")
 
@@ -1522,11 +1584,13 @@ def sync_pull():
             f"Sync pull done — {job['done_files'] - errs - skipped} downloaded, {skipped} skipped, {errs} errors",
         )
 
+        platform = _detect_platform()
         if restore_from_r2 and S3_BUCKET:
             try:
                 r2_snaps = _list_s3_snapshots()
                 if r2_snaps:
                     latest = r2_snaps[0]
+                    add_log("info", f"[{platform}] Downloading R2 snapshot: {latest['name']}")
                     dest_path, dl_err = _download_s3_snapshot(latest["key"])
                     if dest_path:
                         restore_ok, restore_msg = _run_comfyui_manager_restore_snapshot(
@@ -1535,29 +1599,31 @@ def sync_pull():
                         if restore_ok:
                             add_log(
                                 "success",
-                                f"R2 snapshot restored after pull: {latest['name']} — {restore_msg}",
+                                f"[{platform}] R2 snapshot restored after pull: {latest['name']} — {restore_msg}",
                             )
                         else:
                             add_log(
                                 "warning",
-                                f"R2 snapshot restore failed: {restore_msg}",
+                                f"[{platform}] R2 snapshot restore failed: {restore_msg}",
                             )
                     else:
-                        add_log("warning", f"R2 snapshot download failed: {dl_err}")
+                        add_log("warning", f"[{platform}] R2 snapshot download failed: {dl_err}")
                 else:
-                    add_log("warning", "No R2 snapshots found for auto-restore")
+                    add_log("warning", f"[{platform}] No R2 snapshots found for auto-restore")
             except Exception as _e:
-                add_log("warning", f"R2 snapshot restore error: {_e}")
+                add_log("warning", f"[{platform}] R2 snapshot restore error: {_e}")
         else:
+            # Restore latest local snapshot (auto-resolved inside the function)
             restore_ok, restore_msg = _run_comfyui_manager_restore_snapshot()
             if restore_ok:
                 add_log(
-                    "success", f"ComfyUI snapshot restored after sync pull: {restore_msg}"
+                    "success",
+                    f"[{platform}] ComfyUI snapshot restored after sync pull: {restore_msg}",
                 )
             else:
                 add_log(
                     "warning",
-                    f"ComfyUI snapshot restore failed after sync pull: {restore_msg}",
+                    f"[{platform}] ComfyUI snapshot restore failed after sync pull: {restore_msg}",
                 )
 
         job["finished"] = True
@@ -1568,12 +1634,17 @@ def sync_pull():
 
 @app.route("/api/sync/snapshot/save", methods=["POST"])
 def sync_snapshot_save():
-    ok, msg = _run_comfyui_manager_snapshot()
+    ok, msg, snap_path = _run_comfyui_manager_snapshot()
     if ok:
         add_log("success", f"ComfyUI snapshot saved: {msg}")
-        return jsonify({"status": "ok", "message": msg})
+        return jsonify({
+            "status": "ok",
+            "message": msg,
+            "snapshot_path": str(snap_path) if snap_path else None,
+            "platform": _detect_platform(),
+        })
     add_log("error", f"ComfyUI snapshot save failed: {msg}")
-    return jsonify({"error": msg}), 500
+    return jsonify({"error": msg, "platform": _detect_platform()}), 500
 
 
 @app.route("/api/sync/snapshot/list")
@@ -1600,6 +1671,7 @@ def sync_snapshot_list():
             "snapshots_s3_prefix": snapshots_s3_prefix,
             "comfyui_base": COMFYUI_BASE,
             "comfyui_username": COMFYUI_USERNAME,
+            "platform": _detect_platform(),
         }
     )
 
