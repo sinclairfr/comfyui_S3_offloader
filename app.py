@@ -1033,6 +1033,27 @@ def _scan_local_sync_files(folders: list) -> dict:
     return result
 
 
+def _ensure_typer_installed() -> tuple[bool, str]:
+    """Install typer if missing — needed by cm-cli.py on some platforms (e.g. vast.ai)."""
+    try:
+        import typer  # noqa: F401
+        return True, ""
+    except ImportError:
+        pass
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "typer", "-q"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            return False, f"pip install typer failed: {(proc.stderr or proc.stdout).strip()}"
+        return True, "typer installed"
+    except Exception as exc:
+        return False, str(exc)
+
+
 def _run_comfyui_manager_snapshot() -> tuple[bool, str]:
     """Create a ComfyUI-Manager snapshot before backup/sync."""
     comfy_path = Path(COMFYUI_BASE)
@@ -1042,6 +1063,10 @@ def _run_comfyui_manager_snapshot() -> tuple[bool, str]:
         return False, f"ComfyUI base not found: {comfy_path}"
     if not cm_cli.exists():
         return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
+
+    ok, msg = _ensure_typer_installed()
+    if not ok:
+        return False, f"Cannot run cm-cli.py: {msg}"
 
     env = os.environ.copy()
     env["COMFYUI_PATH"] = str(comfy_path)
@@ -1080,6 +1105,10 @@ def _run_comfyui_manager_restore_snapshot(
         return False, f"ComfyUI base not found: {comfy_path}"
     if not cm_cli.exists():
         return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
+
+    ok, msg = _ensure_typer_installed()
+    if not ok:
+        return False, f"Cannot run cm-cli.py: {msg}"
 
     env = os.environ.copy()
     env["COMFYUI_PATH"] = str(comfy_path)
