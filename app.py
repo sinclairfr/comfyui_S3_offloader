@@ -1047,23 +1047,35 @@ def _detect_platform() -> str:
     return "unknown"
 
 
-def _ensure_typer_installed() -> tuple[bool, str]:
-    """Install typer if missing — needed by cm-cli.py on some platforms (e.g. vast.ai)."""
-    try:
-        import typer  # noqa: F401
+# module_name -> pip package name (when they differ)
+_CM_CLI_DEPS: dict[str, str] = {
+    "typer": "typer",
+    "git": "gitpython",
+}
+
+
+def _ensure_cm_cli_deps() -> tuple[bool, str]:
+    """Install any cm-cli.py dependencies missing from the current environment."""
+    missing: list[str] = []
+    for mod, pkg in _CM_CLI_DEPS.items():
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(pkg)
+
+    if not missing:
         return True, ""
-    except ImportError:
-        pass
+
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "typer", "-q"],
+            [sys.executable, "-m", "pip", "install", "-q"] + missing,
             capture_output=True,
             text=True,
             timeout=120,
         )
         if proc.returncode != 0:
-            return False, f"pip install typer failed: {(proc.stderr or proc.stdout).strip()}"
-        return True, "typer installed"
+            return False, f"pip install {' '.join(missing)} failed: {(proc.stderr or proc.stdout).strip()}"
+        return True, f"installed: {', '.join(missing)}"
     except Exception as exc:
         return False, str(exc)
 
@@ -1119,7 +1131,7 @@ def _run_comfyui_manager_snapshot() -> tuple[bool, str, Path | None]:
     if not cm_cli.exists():
         return False, f"ComfyUI-Manager CLI not found: {cm_cli}", None
 
-    ok, dep_msg = _ensure_typer_installed()
+    ok, dep_msg = _ensure_cm_cli_deps()
     if not ok:
         return False, f"[{platform}] Cannot run cm-cli.py: {dep_msg}", None
 
@@ -1168,7 +1180,7 @@ def _run_comfyui_manager_restore_snapshot(
     if not cm_cli.exists():
         return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
 
-    ok, dep_msg = _ensure_typer_installed()
+    ok, dep_msg = _ensure_cm_cli_deps()
     if not ok:
         return False, f"[{platform}] Cannot run cm-cli.py: {dep_msg}"
 
