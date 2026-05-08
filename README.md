@@ -11,6 +11,35 @@ pip install -r requirements.txt
 python app.py
 ```
 
+## Dépannage — Restore R2 échoué (VastAI / ComfyUI-Manager)
+
+Si tu vois une erreur de ce type lors d’une restauration :
+
+```text
+Restore R2 échoué : [vastai] Traceback (most recent call last):
+  File "/workspace/ComfyUI/custom_nodes/ComfyUI-Manager/cm-cli.py", line 21, in <module>
+    import manager_util
+  File "/workspace/ComfyUI/custom_nodes/ComfyUI-Manager/glob/manager_util.py", line 7, in <module>
+    import aiohttp
+ModuleNotFoundError: No module named 'aiohttp'
+```
+
+Cause: le module Python `aiohttp` n’est pas installé dans l’environnement utilisé par ComfyUI-Manager.
+
+Cette dépendance est désormais incluse dans [`requirements.txt`](requirements.txt).
+
+Correctif rapide:
+
+```bash
+pip install -r requirements.txt
+```
+
+Ou, si nécessaire dans l’environnement ComfyUI directement:
+
+```bash
+pip install aiohttp
+```
+
 ## Lancement (port)
 
 Par défaut, le serveur Flask écoute sur le port **8900**.
