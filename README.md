@@ -40,6 +40,25 @@ Ou, si nécessaire dans l’environnement ComfyUI directement:
 pip install aiohttp
 ```
 
+Autre erreur possible sur le même flux de restore:
+
+```text
+⚠ Restore échoué : [vastai] Traceback (most recent call last):
+  File "/workspace/ComfyUI/custom_nodes/ComfyUI-Manager/cm-cli.py", line 40, in <module>
+    import manager_core as core
+  File "/workspace/ComfyUI/custom_nodes/ComfyUI-Manager/glob/manager_core.py", line 26, in <module>
+    import toml
+ModuleNotFoundError: No module named 'toml'
+```
+
+Dans ce cas, installe la dépendance manquante:
+
+```bash
+pip install toml
+```
+
+La dépendance est aussi incluse dans [`requirements.txt`](requirements.txt).
+
 ## Lancement (port)
 
 Par défaut, le serveur Flask écoute sur le port **8900**.
