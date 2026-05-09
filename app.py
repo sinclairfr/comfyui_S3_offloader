@@ -1047,37 +1047,80 @@ def _detect_platform() -> str:
     return "unknown"
 
 
-# module_name -> pip package name (when they differ)
-_CM_CLI_DEPS: dict[str, str] = {
-    "typer": "typer",
+# import name -> pip package name, for modules where they differ
+_MODULE_TO_PKG: dict[str, str] = {
     "git": "gitpython",
+    "cv2": "opencv-python",
+    "PIL": "Pillow",
+    "sklearn": "scikit-learn",
+    "yaml": "PyYAML",
+    "bs4": "beautifulsoup4",
 }
 
+_CM_CLI_MAX_DEP_RETRIES = 5
 
-def _ensure_cm_cli_deps() -> tuple[bool, str]:
-    """Install any cm-cli.py dependencies missing from the current environment."""
-    missing: list[str] = []
-    for mod, pkg in _CM_CLI_DEPS.items():
-        try:
-            __import__(mod)
-        except ImportError:
-            missing.append(pkg)
 
-    if not missing:
-        return True, ""
-
+def _pip_install(pkg: str) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q"] + missing,
-            capture_output=True,
-            text=True,
-            timeout=120,
+            [sys.executable, "-m", "pip", "install", "-q", pkg],
+            capture_output=True, text=True, timeout=120,
         )
         if proc.returncode != 0:
-            return False, f"pip install {' '.join(missing)} failed: {(proc.stderr or proc.stdout).strip()}"
-        return True, f"installed: {', '.join(missing)}"
+            return False, (proc.stderr or proc.stdout).strip()
+        return True, pkg
     except Exception as exc:
         return False, str(exc)
+
+
+def _run_cm_cli(
+    cmd: list[str],
+    env: dict[str, str],
+    cwd: str,
+    timeout: int,
+) -> tuple[int, str, str]:
+    """Run a cm-cli.py command, auto-installing missing Python modules on the fly.
+
+    Returns (returncode, stdout, stderr). On ModuleNotFoundError the missing
+    package is installed and the command is retried up to _CM_CLI_MAX_DEP_RETRIES
+    times, so any future cm-cli dependency is handled without code changes.
+    """
+    installed: set[str] = set()
+    for attempt in range(_CM_CLI_MAX_DEP_RETRIES + 1):
+        try:
+            proc = subprocess.run(
+                cmd, env=env, cwd=cwd,
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except Exception as exc:
+            return 1, "", str(exc)
+
+        if proc.returncode == 0:
+            return 0, proc.stdout or "", proc.stderr or ""
+
+        stderr = proc.stderr or ""
+        stdout = proc.stdout or ""
+
+        # Detect "ModuleNotFoundError: No module named 'X'"
+        match = re.search(r"ModuleNotFoundError: No module named '([^']+)'", stderr + stdout)
+        if not match or attempt == _CM_CLI_MAX_DEP_RETRIES:
+            return proc.returncode, stdout, stderr
+
+        mod = match.group(1).split(".")[0]  # top-level package only
+        pkg = _MODULE_TO_PKG.get(mod, mod)
+
+        if pkg in installed:
+            # Already tried installing this one — give up
+            return proc.returncode, stdout, stderr
+
+        add_log("info", f"cm-cli.py missing module '{mod}' — installing '{pkg}'...")
+        ok, err = _pip_install(pkg)
+        if not ok:
+            return 1, "", f"pip install {pkg} failed: {err}"
+        installed.add(pkg)
+        # loop → retry
+
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
 def _scan_snapshot_files() -> dict[str, float]:
@@ -1131,32 +1174,20 @@ def _run_comfyui_manager_snapshot() -> tuple[bool, str, Path | None]:
     if not cm_cli.exists():
         return False, f"ComfyUI-Manager CLI not found: {cm_cli}", None
 
-    ok, dep_msg = _ensure_cm_cli_deps()
-    if not ok:
-        return False, f"[{platform}] Cannot run cm-cli.py: {dep_msg}", None
-
     before = _scan_snapshot_files()
 
     env = os.environ.copy()
     env["COMFYUI_PATH"] = str(comfy_path)
-    cmd = [sys.executable, str(cm_cli), "save-snapshot"]
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(comfy_path),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-    except Exception as e:
-        return False, str(e), None
+    rc, output, err = _run_cm_cli(
+        cmd=[sys.executable, str(cm_cli), "save-snapshot"],
+        env=env,
+        cwd=str(comfy_path),
+        timeout=180,
+    )
+    output, err = output.strip(), err.strip()
 
-    output = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
-
-    if proc.returncode != 0:
-        details = err or output or f"exit code {proc.returncode}"
+    if rc != 0:
+        details = err or output or f"exit code {rc}"
         return False, f"[{platform}] {details}", None
 
     snap_path = _find_new_snapshot(before)
@@ -1180,10 +1211,6 @@ def _run_comfyui_manager_restore_snapshot(
     if not cm_cli.exists():
         return False, f"ComfyUI-Manager CLI not found: {cm_cli}"
 
-    ok, dep_msg = _ensure_cm_cli_deps()
-    if not ok:
-        return False, f"[{platform}] Cannot run cm-cli.py: {dep_msg}"
-
     # Resolve snapshot file: explicit path takes priority, then latest local
     if not snapshot_file:
         snaps, _ = _list_comfyui_snapshots()
@@ -1198,23 +1225,12 @@ def _run_comfyui_manager_restore_snapshot(
     cmd = [sys.executable, str(cm_cli), "restore-snapshot"]
     if snapshot_file:
         cmd.append(snapshot_file)
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(comfy_path),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except Exception as e:
-        return False, str(e)
 
-    output = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
+    rc, output, err = _run_cm_cli(cmd=cmd, env=env, cwd=str(comfy_path), timeout=300)
+    output, err = output.strip(), err.strip()
 
-    if proc.returncode != 0:
-        details = err or output or f"exit code {proc.returncode}"
+    if rc != 0:
+        details = err or output or f"exit code {rc}"
         return False, f"[{platform}] {details}"
 
     snap_name = Path(snapshot_file).name if snapshot_file else "latest"
