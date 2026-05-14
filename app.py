@@ -1033,18 +1033,28 @@ def _scan_local_sync_files(folders: list) -> dict:
     return result
 
 
+PLATFORM_VASTAI = "vastai"
+PLATFORM_RUNPOD = "runpod"
+
+
 def _detect_platform() -> str:
     """Detect cloud platform: 'vastai', 'runpod', or value of PLATFORM_NAME env."""
     explicit = str(os.getenv("PLATFORM_NAME", "")).strip().lower()
     if explicit:
         return explicit
-    if any(os.getenv(v) for v in ("VAST_CONTAINERLABEL", "VAST_TCP_PORT_8188", "VAST_TASK_ID")):
-        return "vastai"
+    if any(
+        os.getenv(v)
+        for v in ("VAST_CONTAINERLABEL", "VAST_TCP_PORT_8188", "VAST_TASK_ID")
+    ):
+        return PLATFORM_VASTAI
     if any(os.getenv(v) for v in ("RUNPOD_POD_ID", "RUNPOD_API_KEY")):
-        return "runpod"
+        return PLATFORM_RUNPOD
     if Path("/runpod-volume").exists():
-        return "runpod"
+        return PLATFORM_RUNPOD
     return "unknown"
+
+
+PLATFORM = _detect_platform()
 
 
 # import name -> pip package name, for modules where they differ
@@ -1064,7 +1074,9 @@ def _pip_install(pkg: str) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", pkg],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if proc.returncode != 0:
             return False, (proc.stderr or proc.stdout).strip()
@@ -1089,8 +1101,12 @@ def _run_cm_cli(
     for attempt in range(_CM_CLI_MAX_DEP_RETRIES + 1):
         try:
             proc = subprocess.run(
-                cmd, env=env, cwd=cwd,
-                capture_output=True, text=True, timeout=timeout,
+                cmd,
+                env=env,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
         except Exception as exc:
             return 1, "", str(exc)
@@ -1102,7 +1118,9 @@ def _run_cm_cli(
         stdout = proc.stdout or ""
 
         # Detect "ModuleNotFoundError: No module named 'X'"
-        match = re.search(r"ModuleNotFoundError: No module named '([^']+)'", stderr + stdout)
+        match = re.search(
+            r"ModuleNotFoundError: No module named '([^']+)'", stderr + stdout
+        )
         if not match or attempt == _CM_CLI_MAX_DEP_RETRIES:
             return proc.returncode, stdout, stderr
 
@@ -1142,8 +1160,7 @@ def _find_new_snapshot(before: dict[str, float]) -> Path | None:
     """Return the snapshot file that appeared or changed since `before` was captured."""
     after = _scan_snapshot_files()
     new_files = [
-        Path(p) for p, mtime in after.items()
-        if p not in before or mtime > before[p]
+        Path(p) for p, mtime in after.items() if p not in before or mtime > before[p]
     ]
     if not new_files:
         return None
@@ -1266,7 +1283,7 @@ def _list_s3_snapshots() -> list[dict]:
     for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            rel = key[len(prefix):]
+            rel = key[len(prefix) :]
             if not rel or "/" in rel:
                 continue
             if Path(rel).suffix.lower() not in {".json", ".snapshot", ".txt"}:
@@ -1291,7 +1308,7 @@ def _download_s3_snapshot(key: str) -> tuple[Path | None, str]:
     prefix = _get_snapshots_s3_prefix()
     if not key.startswith(prefix):
         return None, "Key is not in snapshots prefix"
-    name = key[len(prefix):]
+    name = key[len(prefix) :]
     if "/" in name or not name:
         return None, "Invalid snapshot key"
 
@@ -1435,7 +1452,10 @@ def sync_push():
                 except Exception as _e:
                     add_log("warning", f"Snapshot push to R2 failed: {_e}")
             elif push_snapshot and S3_BUCKET and not snap_path:
-                add_log("warning", "Snapshot saved but file could not be located — R2 push skipped")
+                add_log(
+                    "warning",
+                    "Snapshot saved but file could not be located — R2 push skipped",
+                )
         else:
             add_log("warning", f"ComfyUI snapshot failed (continuing sync push): {msg}")
 
@@ -1618,7 +1638,10 @@ def sync_pull():
                 r2_snaps = _list_s3_snapshots()
                 if r2_snaps:
                     latest = r2_snaps[0]
-                    add_log("info", f"[{platform}] Downloading R2 snapshot: {latest['name']}")
+                    add_log(
+                        "info",
+                        f"[{platform}] Downloading R2 snapshot: {latest['name']}",
+                    )
                     dest_path, dl_err = _download_s3_snapshot(latest["key"])
                     if dest_path:
                         restore_ok, restore_msg = _run_comfyui_manager_restore_snapshot(
@@ -1635,9 +1658,15 @@ def sync_pull():
                                 f"[{platform}] R2 snapshot restore failed: {restore_msg}",
                             )
                     else:
-                        add_log("warning", f"[{platform}] R2 snapshot download failed: {dl_err}")
+                        add_log(
+                            "warning",
+                            f"[{platform}] R2 snapshot download failed: {dl_err}",
+                        )
                 else:
-                    add_log("warning", f"[{platform}] No R2 snapshots found for auto-restore")
+                    add_log(
+                        "warning",
+                        f"[{platform}] No R2 snapshots found for auto-restore",
+                    )
             except Exception as _e:
                 add_log("warning", f"[{platform}] R2 snapshot restore error: {_e}")
         else:
@@ -1665,12 +1694,14 @@ def sync_snapshot_save():
     ok, msg, snap_path = _run_comfyui_manager_snapshot()
     if ok:
         add_log("success", f"ComfyUI snapshot saved: {msg}")
-        return jsonify({
-            "status": "ok",
-            "message": msg,
-            "snapshot_path": str(snap_path) if snap_path else None,
-            "platform": _detect_platform(),
-        })
+        return jsonify(
+            {
+                "status": "ok",
+                "message": msg,
+                "snapshot_path": str(snap_path) if snap_path else None,
+                "platform": _detect_platform(),
+            }
+        )
     add_log("error", f"ComfyUI snapshot save failed: {msg}")
     return jsonify({"error": msg, "platform": _detect_platform()}), 500
 
@@ -1718,7 +1749,10 @@ def sync_snapshot_push():
         allowed = {str(Path(s["path"]).resolve()) for s in snapshots}
         target = str(Path(snapshot_path).resolve())
         if target not in allowed:
-            return jsonify({"error": "Snapshot not found in known snapshot directories"}), 404
+            return (
+                jsonify({"error": "Snapshot not found in known snapshot directories"}),
+                404,
+            )
         snap_file = Path(target)
     else:
         snapshots, _ = _list_comfyui_snapshots()
@@ -1781,7 +1815,10 @@ def sync_snapshot_restore():
     allowed = {str(Path(s["path"]).resolve()) for s in snapshots}
     target = str(Path(snapshot_path).resolve())
     if target not in allowed:
-        return jsonify({"error": "Snapshot not found in known snapshot directories"}), 404
+        return (
+            jsonify({"error": "Snapshot not found in known snapshot directories"}),
+            404,
+        )
 
     ok, msg = _run_comfyui_manager_restore_snapshot(snapshot_file=target)
     if ok:
