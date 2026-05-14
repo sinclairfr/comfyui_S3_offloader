@@ -984,8 +984,14 @@ def delete_local():
 # --- Sync helpers ---
 
 
+def _get_platform_folder() -> str:
+    """Return 'runpod' or 'comfyui' as the S3 folder discriminator for user data and snapshots."""
+    name = str(PLATFORM_NAME or "").strip().lower() or _detect_platform()
+    return "runpod" if name == PLATFORM_RUNPOD else "comfyui"
+
+
 def _get_sync_s3_prefix() -> str:
-    return f"{S3_PREFIX}sync/"
+    return f"{S3_PREFIX}sync/{_get_platform_folder()}/"
 
 
 def _list_s3_sync_objects(folders: list) -> dict:
@@ -1271,7 +1277,8 @@ def _snapshot_candidates_dirs() -> list[Path]:
 
 def _get_snapshots_s3_prefix() -> str:
     base = (S3_PREFIX or "").rstrip("/")
-    return f"{base}/snapshots/" if base else "snapshots/"
+    platform = _get_platform_folder()
+    return f"{base}/snapshots/{platform}/" if base else f"snapshots/{platform}/"
 
 
 def _list_s3_snapshots() -> list[dict]:
