@@ -184,6 +184,26 @@ Exemple:
 - **Config tab** : change `models_root`, `s3_bucket`, `s3_prefix`, `aws_profile`, `include_personal_stuff`, `personal_paths` à la volée (et sauvegarde dans [`settings.json`](settings.json))
   - bouton `↻ Restart App` pour redémarrer l’application depuis l’UI
 
+## Séparation des dossiers sync/snapshots par plateforme
+
+La variable `platform_name` (ou `PLATFORM_NAME`) permet de séparer les données entre environnements (ex: VastAI vs RunPod).
+
+Valeurs recommandées :
+
+- `vastai`
+- `runpod`
+
+Arborescence S3/R2 attendue :
+
+- Snapshots :
+  - `.../snapshots/vastai/`
+  - `.../snapshots/runpod/`
+- Sync des dossiers ComfyUI :
+  - `.../sync/user/vastai/`
+  - `.../sync/user/runpod/`
+
+Cela évite que les fichiers de plateformes différentes soient mélangés dans un même préfixe.
+
 ## UI — recherche & navigation
 
 - **Local Files**
