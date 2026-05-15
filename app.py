@@ -1045,6 +1045,9 @@ PLATFORM_RUNPOD = "runpod"
 
 def _detect_platform() -> str:
     """Detect cloud platform: 'vastai', 'runpod', or value of PLATFORM_NAME env."""
+    explicit = str(PLATFORM_NAME or "").strip().lower()
+    if explicit:
+        return explicit
     explicit = str(os.getenv("PLATFORM_NAME", "")).strip().lower()
     if explicit:
         return explicit
@@ -1058,9 +1061,6 @@ def _detect_platform() -> str:
     if Path("/runpod-volume").exists():
         return PLATFORM_RUNPOD
     return "unknown"
-
-
-PLATFORM = _detect_platform()
 
 
 # import name -> pip package name, for modules where they differ
